@@ -44,6 +44,8 @@ pub struct TemplateApp {
 
     #[serde(skip)]
     error_value: String,
+
+    volume: f32,
 }
 
 impl Default for TemplateApp {
@@ -64,6 +66,8 @@ impl Default for TemplateApp {
 
             error_show: false,
             error_value: "No error message".to_owned(),
+
+            volume: 1.0,
         }
     }
 }
@@ -184,7 +188,7 @@ impl eframe::App for TemplateApp {
                 ui.horizontal_centered(|ui|{
                     if let Some(playbin) = &self.playbin{
 
-                            //
+                            /////
                             // Seeking
                             let duration = self.duration_ms.max(1) as f32;
                             let mut pos = self.position_ms as f32;
@@ -196,7 +200,7 @@ impl eframe::App for TemplateApp {
                                 let seek_to = gstreamer::ClockTime::from_mseconds(pos as u64);
 
                                 playbin
-                                    .seek_simple(gstreamer::SeekFlags::FLUSH | gstreamer::SeekFlags::KEY_UNIT,seek_to,)// Wow... Gstream really just has that!
+                                    .seek_simple(gstreamer::SeekFlags::FLUSH | gstreamer::SeekFlags::KEY_UNIT,seek_to,)// Wow! Gstream just has that!
                                     .expect("Seek failed");
                             }
 
@@ -237,7 +241,7 @@ impl eframe::App for TemplateApp {
                         });
                     }
 
-                    if ui.button("Start gstream").clicked(){ // This should be considered a debug button. Gstream should be handled more elegantly than this.
+                    if ui.button("Start gstream").clicked(){ // debug button. Gstream should be handled more elegantly than this.
                         // gstream logic
                         gstreamer::init().unwrap();
 
@@ -245,8 +249,8 @@ impl eframe::App for TemplateApp {
                             .build()
                             .expect("Could not create playbin"); //TODO: learn what the playbin is, im just copying from example code
 
-                        // Set the URI of the audio file
-                        // Use "file://" prefix and an absolute path
+                        // Use "file:///" prefix and an absolute path
+                        // In the future, not sure if rust will search using uri's or paths. Hopefully it's paths, then you can convert the path to a uri and check path.exists(). Using uri's directly like this is annoying.
                         let uri = "file:///E:/Programs/miniQuartz/miniQuartz/assets/xXHANA VENOMXx - 920LONDON - 02 iFeelLikeYouWould.flac"; // fui: I think uri's are better? Other libraries required uri's to do dynamic file selection.
                         let path = uri_to_path(uri).unwrap();
                         pb.set_property("uri", uri);
@@ -295,9 +299,12 @@ impl eframe::App for TemplateApp {
                                 _ => {}
                                 }
                             }
+                            playbin.set_property("volume", (self.volume * self.volume * self.volume) as f64); // set volume on gstream start
                         }
                     }
 
+                    /////
+                    // Play/pause button
                     if ui.button("Play/Pause").clicked(){
                         if let Some(playbin) = &self.playbin {
                             let (_success, current, _pending) = playbin.state(gstreamer::ClockTime::NONE);
@@ -310,7 +317,18 @@ impl eframe::App for TemplateApp {
                                     .set_state(gstreamer::State::Playing)
                                     .expect("Unable to play");
                             }
-
+                        }
+                    }
+                    
+                    /////
+                    // Volume slider
+                    let response_volume = ui.add(
+                        egui::Slider::new(&mut self.volume, 0.0..=1.0).text("Volume") // 1.0 here is the max volume
+                    );
+                    if response_volume.changed() {
+                        if let Some(ref bin) = self.playbin {
+                            let cubic_volume = (self.volume * self.volume * self.volume) as f64; // cubic slider & gstreamer needs f64
+                            bin.set_property("volume", cubic_volume);
                         }
                     }
                 });
