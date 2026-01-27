@@ -3,7 +3,8 @@ use egui::{Id, Modal, ScrollArea};
 use egui_extras::{Column, TableBuilder};
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::{Message, Pipeline};
-use std::path::{Path,PathBuf};
+use std::fs;
+use std::path::{Path, PathBuf};
 use url::Url;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -28,7 +29,7 @@ pub struct TemplateApp {
     col2_width: Option<f32>,
 
     #[serde(skip)]
-    playbin: Option<gstreamer::Element>,
+    playbin: gstreamer::Element,
 
     #[serde(skip)]
     position_ms: u64,
@@ -46,20 +47,44 @@ pub struct TemplateApp {
     error_value: String,
 
     volume: f32,
+
+    #[serde(skip)]
+    folders: Vec<std::path::PathBuf>,
+
+    currently_selected_playlist: Option<String>,
+
+    now_playing: Option<PathBuf>,
+}
+
+fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
+    // Move this function to the functions area later, just here for ease of editing rn.
+    let entries = fs::read_dir(path)?; // Read the directory contents
+    let folders = entries
+        .filter_map(|entry| entry.ok()) // Ignore entries with errors (e.g., permission issues)
+        .filter(|entry| entry.path().is_dir()) // Keep only directories
+        .map(|entry| entry.path()) // Convert DirEntry to PathBuf
+        .collect();
+    Ok(folders)
 }
 
 impl Default for TemplateApp {
     fn default() -> Self {
+        gstreamer::init().expect("Failed to init GStreamer");
+
+        let pb = gstreamer::ElementFactory::make("playbin")
+            .build()
+            .expect("Could not create playbin");
+
         Self {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
             // Not example stuff:
-            songs: Songs::new(),
+            songs: Songs::new(std::path::Path::new("./playlists/")),
             row_height: None,
             col1_width: None,
             col2_width: None,
-            playbin: None,
+            playbin: pb,
             position_ms: 0,
             duration_ms: 0,
             last_update: std::time::Instant::now(),
@@ -68,6 +93,12 @@ impl Default for TemplateApp {
             error_value: "No error message".to_owned(),
 
             volume: 1.0,
+
+            folders: get_folders("./playlists/").unwrap_or_default(),
+
+            currently_selected_playlist: None,
+
+            now_playing: None,
         }
     }
 }
@@ -81,19 +112,43 @@ struct SongCardData {
     artist: String,
     length: String,
     cover_path: String,
+    path: std::path::PathBuf,
     texture: Option<egui::TextureHandle>,
 }
 
 impl Songs {
-    fn new() -> Songs {
-        let iter = (0..8000).map(|a| SongCardData {
-            // todo: replace with file searching
-            title: (a).to_string(),
-            artist: (a + 1).to_string(),
-            length: (a * 2).to_string(),
-            cover_path: "assets/icon-256.png".to_owned(),
-            texture: None,
-        });
+    pub fn new(folder_path: &Path) -> Songs {
+        let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a"];
+
+        let iter = fs::read_dir(folder_path)
+            .into_iter() // Handle potential errors reading the folder
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| audio_extensions.contains(&ext.to_lowercase().as_str()))
+                        .unwrap_or(false)
+            })
+            .map(|path| {
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Unknown Track".to_string());
+
+                SongCardData {
+                    title: file_name,
+                    artist: "Unknown Artist".to_owned(), // todo: metadata
+                    length: "--:--".to_owned(),          // todo: parse
+                    cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
+                    path: path.clone(),                  // at most adds 20kb of memory use
+                    texture: None,
+                }
+            });
+
         Songs {
             articles: Vec::from_iter(iter),
         }
@@ -135,15 +190,37 @@ impl TemplateApp {
     }
 }
 
-//--(^人^)---(^人^)--//
-//   Main app logic  //
-//--(^人^)---(^人^)--//
-
-fn uri_to_path(uri: &str) -> Result<PathBuf, String>{
+fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
     Url::parse(uri)
         .map_err(|e| e.to_string())?
         .to_file_path()
         .map_err(|_| "Invalid URI".into())
+}
+
+fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
+    let _ = app.playbin.set_state(gstreamer::State::Null);
+
+    let abs_path = path.canonicalize().unwrap_or(path.clone());
+    let path_str = abs_path.to_string_lossy().to_string();
+
+    let cleaned_path = path_str // this will probably need to be changed for android. God how the hell do you builkd for Android. Rafgh.
+        .replace("\\\\?\\", "")
+        .replace("\\", "/");
+
+    let uri = format!("file:///{}", cleaned_path);
+
+    app.playbin.set_property("uri", &uri);
+
+    if let Err(_) = app.playbin.set_state(gstreamer::State::Playing) {
+        app.error_value =
+            "GStreamer: State change failed. Check if file exists or audio device is ready."
+                .to_owned();
+        app.error_show = true;
+
+        let _ = app.playbin.set_state(gstreamer::State::Null);
+    } else {
+        app.now_playing = Some(path);
+    }
 }
 
 //（︶^︶）（︶^︶）//
@@ -157,6 +234,22 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Inside update(&mut self, ctx, frame)
+        let bus = self.playbin.bus().unwrap();
+        for msg in bus.iter_timed(gstreamer::ClockTime::ZERO) {
+            match msg.view() {
+                gstreamer::MessageView::Eos(..) => {
+                    let _ = self.playbin.set_state(gstreamer::State::Ready);
+                    self.now_playing = None;
+                }
+                gstreamer::MessageView::Error(err) => {
+                    self.error_show = true;
+                    self.error_value = format!("GStreamer Error: {}", err.error()).to_owned();
+                }
+                _ => {}
+            }
+        }
+
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -180,160 +273,110 @@ impl eframe::App for TemplateApp {
         //    Bottom bar to display track info and track controls    //
 
         egui::TopBottomPanel::bottom("status") // todo: make this resizable properly.
-        .resizable(true)
-        .min_height(50.0)
-        .show(ctx, |ui|{
-            ScrollArea::horizontal().show(ui,|ui|{
-                ui.set_min_height(ui.available_height());
-                ui.horizontal_centered(|ui|{
-                    if let Some(playbin) = &self.playbin{
-
-                            /////
-                            // Seeking
+            .resizable(true)
+            .min_height(50.0)
+            .show(ctx, |ui| {
+                ScrollArea::horizontal().show(ui, |ui| {
+                    ui.set_min_height(ui.available_height());
+                    ui.horizontal_centered(|ui| {
+                        /////
+                        // Seeking
+                        let (success, state, _pending) =
+                            self.playbin.state(gstreamer::ClockTime::from_mseconds(0));
+                        if success.is_ok() && (state == gstreamer::State::Playing || state == gstreamer::State::Paused)
+                        {
                             let duration = self.duration_ms.max(1) as f32;
                             let mut pos = self.position_ms as f32;
 
-                            let response = ui.add(
-                                egui::Slider::new(&mut pos, 0.0..=duration).text("Position")
-                            );
-                            if response.changed(){
+                            let response = ui
+                                .add(egui::Slider::new(&mut pos, 0.0..=duration).text("Position"));
+                            if response.changed() {
                                 let seek_to = gstreamer::ClockTime::from_mseconds(pos as u64);
 
-                                playbin
-                                    .seek_simple(gstreamer::SeekFlags::FLUSH | gstreamer::SeekFlags::KEY_UNIT,seek_to,)// Wow! Gstream just has that!
+                                self.playbin
+                                    .seek_simple(
+                                        gstreamer::SeekFlags::FLUSH
+                                            | gstreamer::SeekFlags::KEY_UNIT,
+                                        seek_to,
+                                    ) // Wow! Gstream just has that!
                                     .expect("Seek failed");
                             }
-
-                            if self.last_update.elapsed().as_millis() > 100 {
-                                // Set position
-                                if let Some(pos) = playbin.query_position::<gstreamer::ClockTime>(){
-                                    self.position_ms = pos.mseconds();
-                                }
-                                // Set duration Todo: This only needs to be done when starting playback. Not every frame.
-                                if let Some(dur) = playbin.query_duration::<gstreamer::ClockTime>() {
-                                    self.duration_ms = dur.mseconds();
-                                }
-                                self.last_update = std::time::Instant::now();
+                        }
+                        if self.last_update.elapsed().as_millis() > 100 {
+                            // Set position
+                            if let Some(pos) = self.playbin.query_position::<gstreamer::ClockTime>()
+                            {
+                                self.position_ms = pos.mseconds();
                             }
-                    }
-
-                    if self.error_show{
-                        Modal::new(Id::new("IO Error")).show(ui.ctx(), |ui| {
-                            ui.set_width(200.0);
-                            ui.heading("Error");
-                            ui.label(&self.error_value);
-
-                           ui.add_space(32.0);
-
-                           egui::Sides::new().show(
-                                ui,
-                            |_ui| {},
-                            |ui| {
-                                   if ui.button("aw dang").clicked() {
-                                        self.error_show = false;
-                                   }
-
-                                    if ui.button("im sorry").clicked() {
-                                        self.error_show = false;
-                                   }
-                               },
-                           );
-                        });
-                    }
-
-                    if ui.button("Start gstream").clicked(){ // debug button. Gstream should be handled more elegantly than this.
-                        // gstream logic
-                        gstreamer::init().unwrap();
-
-                        let pb = gstreamer::ElementFactory::make("playbin")
-                            .build()
-                            .expect("Could not create playbin"); //TODO: learn what the playbin is, im just copying from example code
-
-                        // Use "file:///" prefix and an absolute path
-                        // In the future, not sure if rust will search using uri's or paths. Hopefully it's paths, then you can convert the path to a uri and check path.exists(). Using uri's directly like this is annoying.
-                        let uri = "file:///E:/Programs/miniQuartz/miniQuartz/assets/xXHANA VENOMXx - 920LONDON - 02 iFeelLikeYouWould.flac"; // fui: I think uri's are better? Other libraries required uri's to do dynamic file selection.
-                        let path = uri_to_path(uri).unwrap();
-                        pb.set_property("uri", uri);
-
-                        // verify file
-                        if path.exists() {
-                        // Start playback
-                        pb
-                            .set_state(gstreamer::State::Playing)
-                            .expect("Unable to set the pipeline to the Playing state"); // TODO: remove all these expects and replace with proper error handling. they're probably bad!
-                        self.playbin = Some(pb);
-                        } else { //modal code from demo https://github.com/emilk/egui/blob/main/crates/egui_demo_lib/src/demo/modals.rs
-                            ui.label(format!("help"));
-                            self.error_value = "path.exists() returned false (File not found) : In the future, this shouldn't be an error message but should gray out the song and skip it.".to_owned();
-                            self.error_show = true;
+                            // Set duration Todo: This only needs to be done when starting playback. Not every frame.
+                            if let Some(dur) = self.playbin.query_duration::<gstreamer::ClockTime>()
+                            {
+                                self.duration_ms = dur.mseconds();
+                            }
+                            self.last_update = std::time::Instant::now();
                         }
 
-                        if let Some(playbin) = &self.playbin{
-                            if self.last_update.elapsed().as_millis() > 100 {
-                                // Set position
-                                if let Some(pos) = playbin.query_position::<gstreamer::ClockTime>(){
-                                    self.position_ms = pos.mseconds();
-                                }
-                                // Set duration Todo: This only needs to be done when starting playback. Not every frame.
-                                if let Some(dur) = playbin.query_duration::<gstreamer::ClockTime>() {
-                                    self.duration_ms = dur.mseconds();
-                                }
-                                self.last_update = std::time::Instant::now();
-                            }
+                        if self.error_show {
+                            // todo: error function that will do this. cause this isnt the only error
+                            Modal::new(Id::new("IO Error")).show(ui.ctx(), |ui| {
+                                ui.set_width(200.0);
+                                ui.heading("Error");
+                                ui.label(&self.error_value);
 
-                            let bus = playbin.bus().unwrap();
-                            for msg in bus.iter_timed(gstreamer::ClockTime::from_mseconds(0)){ // Every frame get bus info. Todo: Put this on a separate thread.
-                                match msg.view(){
-                                    gstreamer::MessageView::Eos(..) => {
-                                        playbin
-                                            .set_state(gstreamer::State::Null)
-                                            .expect("Unable to set the pipeline to the Null state (EOS)");
-                                        break;
-                                    }
-                                    gstreamer::MessageView::Error(err) => {
-                                        playbin //ui.label(format!("FPS: {:.1}", fps));
-                                            .set_state(gstreamer::State::Null)
-                                            .expect(&format!("Unable to set the pipeline to the Null state (ERR) {}", err));
-                                        break;
-                                    }
-                                _ => {}
-                                }
-                            }
-                            playbin.set_property("volume", (self.volume * self.volume * self.volume) as f64); // set volume on gstream start
+                                ui.add_space(32.0);
+
+                                egui::Sides::new().show(
+                                    ui,
+                                    |_ui| {},
+                                    |ui| {
+                                        if ui.button("aw dang").clicked() {
+                                            self.error_show = false;
+                                        }
+
+                                        if ui.button("im sorry").clicked() {
+                                            self.error_show = false;
+                                        }
+                                    },
+                                );
+                            });
                         }
-                    }
 
-                    /////
-                    // Play/pause button
-                    if ui.button("Play/Pause").clicked(){
-                        if let Some(playbin) = &self.playbin {
-                            let (_success, current, _pending) = playbin.state(gstreamer::ClockTime::NONE);
-                            if current == gstreamer::State::Playing{
-                                playbin
+                        if ui.button("Start gstream").clicked() {
+                            // debug button. Gstream should be handled more elegantly than this.
+                            play_song(
+                                self,
+                                std::path::PathBuf::from("playlists/Playlist 1/Childs Play.mp3"),
+                            );
+                        }
+
+                        /////
+                        // Play/pause button
+                        if ui.button("Play/Pause").clicked() {
+                            let (_success, current, _pending) =
+                                self.playbin.state(gstreamer::ClockTime::NONE);
+                            if current == gstreamer::State::Playing {
+                                self.playbin
                                     .set_state(gstreamer::State::Paused)
                                     .expect("Unable to pause");
                             } else if current == gstreamer::State::Paused {
-                                playbin
+                                self.playbin
                                     .set_state(gstreamer::State::Playing)
                                     .expect("Unable to play");
                             }
                         }
-                    }
-                    
-                    /////
-                    // Volume slider
-                    let response_volume = ui.add(
-                        egui::Slider::new(&mut self.volume, 0.0..=1.0).text("Volume") // 1.0 here is the max volume
-                    );
-                    if response_volume.changed() {
-                        if let Some(ref bin) = self.playbin {
+
+                        /////
+                        // Volume slider
+                        let response_volume = ui.add(
+                            egui::Slider::new(&mut self.volume, 0.0..=1.0).text("Volume"), // 1.0 here is the max volume
+                        );
+                        if response_volume.changed() {
                             let cubic_volume = (self.volume * self.volume * self.volume) as f64; // cubic slider & gstreamer needs f64
-                            bin.set_property("volume", cubic_volume);
+                            self.playbin.set_property("volume", cubic_volume);
                         }
-                    }
+                    });
                 });
             });
-        });
 
         //--(*￣3￣)╭----(*￣3￣)╭---(*￣3￣)╭----(*￣3￣)╭--//
         // Side panel to display playlists and app controls //
@@ -347,21 +390,36 @@ impl eframe::App for TemplateApp {
                 ui.label(format!("FPS: {:.1}", fps));
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.set_min_width(ui.available_width()); // this makes smooth resizing possible. feels kinda jank but whatever.
-                    ui.label("Playlists Hereeeeeeeeeee");
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        for folder in &self.folders {
+                            //let folder_path = folder.display().to_string(); // will need this for getting songs in the folder
+                            let folder_name = folder
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "Unknown".to_string());
+                            if ui
+                                .selectable_label(false, format!("📁 {}", folder_name))
+                                .clicked()
+                            {
+                                self.currently_selected_playlist = Some(folder_name.clone());
+                                self.songs = Songs::new(folder);
+                            }
+                        }
+                    })
                 });
             });
 
         //--◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐-//
-        //   Central pain to display: Playlist contents, album contents, artist pages   //
+        //   Central panel to display: Playlist contents, album contents, artist pages  //
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // central panel has to be rendered after other panels
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Playlist name here")
-                        .size(32.0)
-                        .strong(),
-                );
+                let playlist_name = self
+                    .currently_selected_playlist
+                    .as_deref()
+                    .unwrap_or("No playlist selected");
+                ui.label(egui::RichText::new(playlist_name).size(32.0).strong());
             });
             let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
             let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
@@ -441,12 +499,11 @@ impl eframe::App for TemplateApp {
 
                     for i in start..end {
                         // Display tracks that should be displayed
-                        // no longer render buffer stuff
                         let song = &mut self.songs.articles[i]; // Ampersand makes it read-only, since the for loop tries to own "articles"
                         song.load_texture_if_needed(ctx);
 
                         //ui.set_min_width(available_width-20.0);
-                        let group = ui.group(|ui| {
+                        let group_card = ui.group(|ui| {
                             //ui.horizontal(|ui|{
                             TableBuilder::new(ui)
                                 .column(Column::exact(col2_width + 20.0)) // 20.0 comes from the first header (#) column's exact width. should be set to a variable! todo
@@ -466,19 +523,14 @@ impl eframe::App for TemplateApp {
                                             }
                                             ui.vertical(|ui| {
                                                 // song & artist names
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "Title: {}",
-                                                        song.title
-                                                    ))
-                                                    .strong(),
-                                                );
-                                                ui.label(format!("Artist {}", song.artist));
+                                                ui.label(egui::RichText::new(&song.title).strong());
+                                                ui.label(&song.artist);
                                             });
                                         });
                                     });
-                                    header.col(|ui| { // todo: why doesnt this show up
-                                        ui.horizontal(|ui|{
+                                    header.col(|ui| {
+                                        // todo: why doesnt this show up
+                                        ui.horizontal(|ui| {
                                             ui.add_space(30.0);
                                             ui.label("nyaaaaaaaa");
                                         });
@@ -493,8 +545,24 @@ impl eframe::App for TemplateApp {
                             //});
                         });
                         if self.row_height.is_none() {
-                            self.row_height = Some(group.response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
-                        } // this really only needs to be done on startup and zoom (zoom tbi)
+                            self.row_height = Some(group_card.response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
+                        } // this really only needs to be done on startup (and maybe zoom)
+
+                        let group_card = group_card.response.interact(egui::Sense::click());
+
+                        if group_card.clicked() {
+                            self.now_playing = Some(song.path.clone());
+                        }
+
+                        if group_card.hovered() {
+                            // Paint a background rectangle behind the group
+                            // We use visuals.bg_fill and visuals.rounding to stay 100% on-theme
+                            ui.painter().rect_filled(
+                                group_card.rect,
+                                4.0,
+                                egui::Color32::from_white_alpha(10),
+                            );
+                        }
                     }
 
                     let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
