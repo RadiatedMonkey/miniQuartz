@@ -52,6 +52,7 @@ pub struct TemplateApp {
     folders: Vec<std::path::PathBuf>,
 
     currently_selected_playlist: Option<String>,
+    currently_selected_playlist_path: Option<PathBuf>,
 
     now_playing: Option<PathBuf>,
 }
@@ -97,9 +98,37 @@ impl Default for TemplateApp {
             folders: get_folders("./playlists/").unwrap_or_default(),
 
             currently_selected_playlist: None,
+            currently_selected_playlist_path: Some(std::path::PathBuf::from("")),
 
             now_playing: None,
         }
+    }
+}
+
+impl TemplateApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut app: Self = if let Some(storage) = cc.storage {
+             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
+        } else {
+             Default::default()
+        };
+
+        app.initialize_gstreamer(); 
+
+        if let Some(path) = app.currently_selected_playlist_path.as_ref() {
+            if path.exists() { // Check bc user may have deleted folder
+                app.songs = Songs::new(path);
+            }
+        }
+
+        app
+    }
+    
+    fn initialize_gstreamer(&mut self) {
+        gstreamer::init().expect("Failed to init GStreamer");
+        self.playbin = gstreamer::ElementFactory::make("playbin")
+            .build()
+            .expect("Could not create playbin");
     }
 }
 
@@ -169,23 +198,6 @@ impl SongCardData {
                 );
                 self.texture = Some(texture);
             }
-        }
-    }
-}
-
-impl TemplateApp {
-    /// Called once before the first frame.
-
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
-
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
-        } else {
-            Default::default()
         }
     }
 }
@@ -286,7 +298,9 @@ impl eframe::App for TemplateApp {
                         // Seeking
                         let (success, state, _pending) =
                             self.playbin.state(gstreamer::ClockTime::from_mseconds(0));
-                        if success.is_ok() && (state == gstreamer::State::Playing || state == gstreamer::State::Paused)
+                        if success.is_ok()
+                            && (state == gstreamer::State::Playing
+                                || state == gstreamer::State::Paused)
                         {
                             let duration = self.duration_ms.max(1) as f32;
                             let mut pos = self.position_ms as f32;
@@ -405,6 +419,7 @@ impl eframe::App for TemplateApp {
                                 .clicked()
                             {
                                 self.currently_selected_playlist = Some(folder_name.clone());
+                                self.currently_selected_playlist_path = Some(folder.clone());
                                 self.songs = Songs::new(folder);
                             }
                         }
