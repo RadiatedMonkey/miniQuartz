@@ -2,7 +2,6 @@
 use egui::{Id, Modal, ScrollArea, Color32};
 use egui_extras::{Column, TableBuilder};
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
-use gstreamer::{Message, Pipeline};
 use std::fs;
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -306,7 +305,7 @@ impl eframe::App for TemplateApp {
         //--\(￣︶￣*\))---\(￣︶￣*\))---\(￣︶￣*\))---\(￣︶￣*\))--//
         //    Bottom bar to display track info and track controls    //
 
-        egui::TopBottomPanel::bottom("status") // todo: make this resizable properly.
+        egui::TopBottomPanel::bottom("status")
             .resizable(true)
             .min_height(50.0)
             .show(ctx, |ui| {
@@ -461,7 +460,7 @@ impl eframe::App for TemplateApp {
                     .currently_selected_playlist
                     .as_deref()
                     .unwrap_or("No playlist selected");
-                ui.selectable_label(false,egui::RichText::new(playlist_name).size(32.0).strong());
+                ui.label(egui::RichText::new(playlist_name).size(32.0).strong());
             });
             let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
             let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
@@ -574,7 +573,9 @@ impl eframe::App for TemplateApp {
                                                 .strong()
                                                 .color(color)
                                                 );
-                                                ui.label(&song.artist);
+                                                if ui.link(&song.artist).clicked(){
+                                                    //meow // WHY ARENT YOU CLICKABLEEE
+                                                }
                                             });
                                         });
                                     });
@@ -594,6 +595,7 @@ impl eframe::App for TemplateApp {
                                 });
                             //});
                         });
+                        
                         if self.row_height.is_none() {
                             self.row_height = Some(group_card.response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
                         } // this really only needs to be done on startup (and maybe zoom)
@@ -633,6 +635,6 @@ impl eframe::App for TemplateApp {
                 egui::warn_if_debug_build(ui); // this was in the example thing and idk if its needed or if theres a benefit to removing it
             });
         });
-        ctx.request_repaint_after(std::time::Duration::from_millis(300)); // Updates UI every 300ms, so that the duration bar moves smoothly.
+        ctx.request_repaint_after(std::time::Duration::from_millis(300)); // Updates UI every 300ms, so that the duration bar moves smoothly when tabbed out
     }
 }
