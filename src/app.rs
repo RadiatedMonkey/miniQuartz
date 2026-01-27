@@ -119,6 +119,7 @@ impl Default for TemplateApp {
 
 impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        cc.egui_ctx.style_mut(|s| s.interaction.selectable_labels = false);
         let mut app: Self = if let Some(storage) = cc.storage {
              eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
@@ -460,7 +461,7 @@ impl eframe::App for TemplateApp {
                     .currently_selected_playlist
                     .as_deref()
                     .unwrap_or("No playlist selected");
-                ui.label(egui::RichText::new(playlist_name).size(32.0).strong());
+                ui.selectable_label(false,egui::RichText::new(playlist_name).size(32.0).strong());
             });
             let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
             let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
