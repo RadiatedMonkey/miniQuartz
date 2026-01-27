@@ -200,6 +200,9 @@ fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
 fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
     let _ = app.playbin.set_state(gstreamer::State::Null);
 
+    let cubic_volume = (app.volume * app.volume * app.volume) as f64; // cubic slider & gstreamer needs f64
+    app.playbin.set_property("volume", cubic_volume);
+
     let abs_path = path.canonicalize().unwrap_or(path.clone());
     let path_str = abs_path.to_string_lossy().to_string();
 
@@ -341,7 +344,7 @@ impl eframe::App for TemplateApp {
                             });
                         }
 
-                        if ui.button("Start gstream").clicked() {
+                        if ui.button("Play test audio").clicked() {
                             // debug button. Gstream should be handled more elegantly than this.
                             play_song(
                                 self,
@@ -424,7 +427,7 @@ impl eframe::App for TemplateApp {
             let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
             let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
             let col1_width = self.col1_width.unwrap_or(30.0);
-            let col2_width = self.col2_width.unwrap_or(100.0);
+            let col2_width = self.col2_width.unwrap_or(100.0); // when there's not enough space for everything, it crashes! fix that.
             let last_column_width = available_width - (20.0 + col2_width + col_time_width); // proper row height: it feels wrong to be setting this every frame. todo: optimize that
             ui.group(|ui| {
                 TableBuilder::new(ui)

@@ -6,9 +6,15 @@ The reason this exists is:
 - I want to learn Rust
 
 Goals, in order of priority:
-1. Fast and lightweight cross-platform file playback. Windows and Android are the main focus, but Linux would be nice to have.
+1. Fast and lightweight cross-platform file playback.
+Windows and Android are the main focus, but Linux would be nice to have too.
+Basic features; queue, playlists, search, no stutter at high load
+
 2. Soulseek (or torrent) search in-app
-3. Last.fm implementation for recommendation algorithm
+Search bar should behave similarly to the ones on streaming services; make a search & you get a list of results you browse through.
+
+3. Last.fm implementation
+Artist pages, recommended playlists, scrobbles, show what's now playing on last.fm
 
 If all goals are met, then it should provide a similar experience to streaming platforms, while being entirely local files.
 
