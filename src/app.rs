@@ -1,5 +1,5 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
-use egui::{Id, Modal, ScrollArea};
+use egui::{Id, Modal, ScrollArea, Color32};
 use egui_extras::{Column, TableBuilder};
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::{Message, Pipeline};
@@ -55,6 +55,8 @@ pub struct TemplateApp {
     currently_selected_playlist_path: Option<PathBuf>,
 
     now_playing: Option<PathBuf>,
+
+    now_playing_song: Option<SongCardData>,
 }
 
 fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
@@ -101,6 +103,16 @@ impl Default for TemplateApp {
             currently_selected_playlist_path: Some(std::path::PathBuf::from("")),
 
             now_playing: None,
+
+            now_playing_song: Some(SongCardData {
+                    title: "none".to_owned(),
+                    artist: "none".to_owned(), // todo: metadata
+                    length: "--:--".to_owned(),          // todo: parse
+                    cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
+                    path: std::path::PathBuf::from(""),
+                    texture: None,
+                    playing: false,
+                }),
         }
     }
 }
@@ -118,6 +130,8 @@ impl TemplateApp {
         if let Some(path) = app.currently_selected_playlist_path.as_ref() {
             if path.exists() { // Check bc user may have deleted folder
                 app.songs = Songs::new(path);
+            }else{
+                app.currently_selected_playlist = Some("Playlist not found".to_owned());
             }
         }
 
@@ -136,13 +150,16 @@ struct Songs {
     articles: Vec<SongCardData>,
 }
 
+#[derive(Clone, serde::Deserialize, serde::Serialize)] // This is so serde knows wat 2 do
 struct SongCardData {
     title: String,
     artist: String,
     length: String,
     cover_path: String,
     path: std::path::PathBuf,
+    #[serde(skip)] // Serde cant do this... so album cover views should be loaded on startup, too. Later.
     texture: Option<egui::TextureHandle>,
+    playing: bool,
 }
 
 impl Songs {
@@ -175,6 +192,7 @@ impl Songs {
                     cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
                     path: path.clone(),                  // at most adds 20kb of memory use
                     texture: None,
+                    playing: false,
                 }
             });
 
@@ -293,6 +311,11 @@ impl eframe::App for TemplateApp {
             .show(ctx, |ui| {
                 ScrollArea::horizontal().show(ui, |ui| {
                     ui.set_min_height(ui.available_height());
+                    let title = self.now_playing_song
+                        .as_ref()
+                        .map(|s| s.title.clone())
+                        .unwrap_or_else(|| "no song".to_owned());
+                    ui.label(title);
                     ui.horizontal_centered(|ui| {
                         /////
                         // Seeking
@@ -362,7 +385,7 @@ impl eframe::App for TemplateApp {
                             // debug button. Gstream should be handled more elegantly than this.
                             play_song(
                                 self,
-                                std::path::PathBuf::from("playlists/Playlist 1/Childs Play.mp3"),
+                                std::path::PathBuf::from("playlists/Playlist 2/forever.mp3"),
                             );
                         }
 
@@ -533,15 +556,23 @@ impl eframe::App for TemplateApp {
                                             if let Some(tex) = &song.texture {
                                                 ui.add(
                                             egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
-                                                .max_width(30.0)
-                                                .corner_radius(10),
-                                        );
+                                                    .max_width(30.0)
+                                                    .corner_radius(10),
+                                                );
                                             } else {
                                                 ui.label("img not found"); // TODO: "no album" image instead of text
                                             }
                                             ui.vertical(|ui| {
                                                 // song & artist names
-                                                ui.label(egui::RichText::new(&song.title).strong());
+                                                let color = if self.now_playing == Some(song.path.clone()){
+                                                    Color32::from_rgb(255,165,0) // make this configurable later
+                                                } else{
+                                                    ui.visuals().text_color()
+                                                };
+                                                ui.label(egui::RichText::new(&song.title)
+                                                .strong()
+                                                .color(color)
+                                                );
                                                 ui.label(&song.artist);
                                             });
                                         });
@@ -550,13 +581,13 @@ impl eframe::App for TemplateApp {
                                         // todo: why doesnt this show up
                                         ui.horizontal(|ui| {
                                             ui.add_space(30.0);
-                                            ui.label("nyaaaaaaaa");
+                                            ui.label("nyaaaaaaaa"); //todo: album name here
                                         });
                                     });
                                     header.col(|ui| {
                                         // todo: shouldn't be part of the table.
                                         ui.vertical_centered(|ui| {
-                                            ui.label(format!("Length {}", song.length)); // this will need to convert whatever songs have (probably ms) into H:M:S format in the future
+                                            ui.label(format!("{}", song.length)); // this will need to convert whatever songs have (probably ms) into H:M:S format in the future
                                         });
                                     });
                                 });
@@ -567,9 +598,19 @@ impl eframe::App for TemplateApp {
                         } // this really only needs to be done on startup (and maybe zoom)
 
                         let group_card = group_card.response.interact(egui::Sense::click());
-
+                        if self.now_playing == Some(song.path.clone()) {
+                            ui.painter().rect_filled(
+                                group_card.rect,
+                                4.0,
+                                egui::Color32::from_white_alpha(10),
+                            );
+                        }
                         if group_card.clicked() {
-                            self.now_playing = Some(song.path.clone());
+                            song.playing = true;
+                            let path = song.path.clone();
+                            self.now_playing = Some(path.clone());
+                            self.now_playing_song = Some(song.clone());
+                            play_song(self, path);
                         }
 
                         if group_card.hovered() {
