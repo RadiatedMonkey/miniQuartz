@@ -230,6 +230,10 @@ fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
         .to_file_path()
         .map_err(|_| "Invalid URI".into())
 }
+fn show_error(app: &mut TemplateApp, error: String) {
+    app.error_value = error;
+    app.error_show = true;
+}
 
 fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
     let _ = app.playbin.set_state(gstreamer::State::Null);
@@ -249,11 +253,11 @@ fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
     app.playbin.set_property("uri", &uri);
 
     if let Err(_) = app.playbin.set_state(gstreamer::State::Playing) {
-        app.error_value =
+        show_error(
+            app,
             "GStreamer: State change failed. Check if file exists or audio device is ready."
-                .to_owned();
-        app.error_show = true;
-
+                .to_owned(),
+        );
         let _ = app.playbin.set_state(gstreamer::State::Null);
     } else {
         app.now_playing = Some(path);
@@ -277,11 +281,10 @@ impl eframe::App for TemplateApp {
             match msg.view() {
                 gstreamer::MessageView::Eos(..) => {
                     let _ = self.playbin.set_state(gstreamer::State::Ready);
-                    self.now_playing = None;
+                    self.now_playing = None; // todo: set this to first song playlist
                 }
                 gstreamer::MessageView::Error(err) => {
-                    self.error_show = true;
-                    self.error_value = format!("GStreamer Error: {}", err.error()).to_owned();
+                    show_error(self, format!("GStreamer Error: {}", err.error().to_owned()));
                 }
                 _ => {}
             }
@@ -346,6 +349,11 @@ impl eframe::App for TemplateApp {
                                     ) // Wow! Gstream just has that!
                                     .expect("Seek failed");
                             }
+                        } else {
+                            ui.add_enabled(
+                                false,
+                                egui::Slider::new(&mut 0.0, 0.0..=1.0).text("Position"),
+                            );
                         }
                         if self.last_update.elapsed().as_millis() > 100 {
                             // Set position
@@ -397,16 +405,23 @@ impl eframe::App for TemplateApp {
                         /////
                         // Play/pause button
                         if ui.button("Play/Pause").clicked() {
-                            let (_success, current, _pending) =
-                                self.playbin.state(gstreamer::ClockTime::NONE);
+                            let (_success, current, _pending) = self.playbin.state(gstreamer::ClockTime::NONE); // todo: i think i'm checking this a few times per loop. should make this check once and set a variable
                             if current == gstreamer::State::Playing {
-                                self.playbin
-                                    .set_state(gstreamer::State::Paused)
-                                    .expect("Unable to pause");
+                                if let Err(err) = self.playbin.set_state(gstreamer::State::Paused) {
+                                    show_error(self, err.to_string());
+                                }
                             } else if current == gstreamer::State::Paused {
-                                self.playbin
-                                    .set_state(gstreamer::State::Playing)
-                                    .expect("Unable to play");
+                                if let Err(err) = self.playbin.set_state(gstreamer::State::Playing) {
+                                    show_error(self, err.to_string());
+                                }
+                            } else {
+                                let song_path = self.now_playing_song.as_ref().map(|s| s.path.clone());
+                                if let Some(path) = song_path {
+                                    play_song(self, path);
+                                } else{
+                                    show_error(self, "No song ready to play".to_owned()); // This should be removed in the future. Expected behaviour would be to disable the play/pause button.
+                                }
+                                
                             }
                         }
 
@@ -490,9 +505,9 @@ impl eframe::App for TemplateApp {
                             .show(ui, |ui| {
                                 ui.label("Title");
                             });
-                        
+
                         ui.separator();
-                        
+
                         ui.label("Album");
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -503,12 +518,7 @@ impl eframe::App for TemplateApp {
                     });
                 });
             egui::CentralPanel::default().show(ctx, |ui| {
-                let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
-                let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
-                let col1_width = self.col1_width.unwrap_or(30.0);
-                let col2_width = self.col2_width.unwrap_or(100.0); // when there's not enough space for everything, it crashes! fix that.
-                let last_column_width = available_width - (20.0 + col2_width + col_time_width); // proper row height: it feels wrong to be setting this every frame. todo: optimize that
-
+                // Nested panels don't usually behave well but it works so idk lol.
                 ScrollArea::vertical()
                     //.max_width(available_width-5.0)
                     .show(ui, |ui| {
