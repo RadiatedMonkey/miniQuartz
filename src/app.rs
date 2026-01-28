@@ -1,5 +1,6 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
-use egui::{Id, Modal, ScrollArea, Color32};
+use egui::Widget;
+use egui::{Color32, Id, Modal, ScrollArea};
 use egui_extras::{Column, TableBuilder};
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use std::fs;
@@ -104,40 +105,42 @@ impl Default for TemplateApp {
             now_playing: None,
 
             now_playing_song: Some(SongCardData {
-                    title: "none".to_owned(),
-                    artist: "none".to_owned(), // todo: metadata
-                    length: "--:--".to_owned(),          // todo: parse
-                    cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
-                    path: std::path::PathBuf::from(""),
-                    texture: None,
-                    playing: false,
-                }),
+                title: "none".to_owned(),
+                artist: "none".to_owned(),  // todo: metadata
+                length: "--:--".to_owned(), // todo: parse
+                cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
+                path: std::path::PathBuf::from(""),
+                texture: None,
+                playing: false,
+            }),
         }
     }
 }
 
 impl TemplateApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.style_mut(|s| s.interaction.selectable_labels = false);
+        cc.egui_ctx
+            .style_mut(|s| s.interaction.selectable_labels = false);
         let mut app: Self = if let Some(storage) = cc.storage {
-             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
+            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
-             Default::default()
+            Default::default()
         };
 
-        app.initialize_gstreamer(); 
+        app.initialize_gstreamer();
 
         if let Some(path) = app.currently_selected_playlist_path.as_ref() {
-            if path.exists() { // Check bc user may have deleted folder
+            if path.exists() {
+                // Check bc user may have deleted folder
                 app.songs = Songs::new(path);
-            }else{
+            } else {
                 app.currently_selected_playlist = Some("Playlist not found".to_owned());
             }
         }
 
         app
     }
-    
+
     fn initialize_gstreamer(&mut self) {
         gstreamer::init().expect("Failed to init GStreamer");
         self.playbin = gstreamer::ElementFactory::make("playbin")
@@ -157,7 +160,8 @@ struct SongCardData {
     length: String,
     cover_path: String,
     path: std::path::PathBuf,
-    #[serde(skip)] // Serde cant do this... so album cover views should be loaded on startup, too. Later.
+    #[serde(skip)]
+    // Serde cant do this... so album cover views should be loaded on startup, too. Later.
     texture: Option<egui::TextureHandle>,
     playing: bool,
 }
@@ -311,7 +315,8 @@ impl eframe::App for TemplateApp {
             .show(ctx, |ui| {
                 ScrollArea::horizontal().show(ui, |ui| {
                     ui.set_min_height(ui.available_height());
-                    let title = self.now_playing_song
+                    let title = self
+                        .now_playing_song
                         .as_ref()
                         .map(|s| s.title.clone())
                         .unwrap_or_else(|| "no song".to_owned());
@@ -455,6 +460,12 @@ impl eframe::App for TemplateApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // central panel has to be rendered after other panels
+            egui::TopBottomPanel::bottom("meowww")
+                .resizable(true)
+                .min_height(50.0)
+                .show(ctx, |ui| {
+                    ui.label("Meow");
+                });
             ui.horizontal(|ui| {
                 let playlist_name = self
                     .currently_selected_playlist
@@ -515,7 +526,6 @@ impl eframe::App for TemplateApp {
                         });
                     });
             });
-
             ScrollArea::vertical()
                 //.max_width(available_width-5.0)
                 .show(ui, |ui| {
@@ -537,86 +547,81 @@ impl eframe::App for TemplateApp {
 
                     let above_px = start as f32 * row_height;
                     ui.add_space(above_px); // makes scroll bar look big (1/2)
-
+                    let mut clicked_song_index = None;
                     for i in start..end {
-                        // Display tracks that should be displayed
-                        let song = &mut self.songs.articles[i]; // Ampersand makes it read-only, since the for loop tries to own "articles"
+
+                        let song = &mut self.songs.articles[i];
                         song.load_texture_if_needed(ctx);
 
-                        //ui.set_min_width(available_width-20.0);
-                        let group_card = ui.group(|ui| {
-                            //ui.horizontal(|ui|{
-                            TableBuilder::new(ui)
-                                .column(Column::exact(col2_width + 20.0)) // 20.0 comes from the first header (#) column's exact width. should be set to a variable! todo
-                                .column(Column::exact(col1_width))
-                                .column(Column::exact(col_time_width))
-                                .header(30.0, |mut header| {
-                                    header.col(|ui| {
-                                        ui.horizontal(|ui| {
-                                            if let Some(tex) = &song.texture {
-                                                ui.add(
-                                            egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
-                                                    .max_width(30.0)
-                                                    .corner_radius(10),
-                                                );
-                                            } else {
-                                                ui.label("img not found"); // TODO: "no album" image instead of text
-                                            }
-                                            ui.vertical(|ui| {
-                                                // song & artist names
-                                                let color = if self.now_playing == Some(song.path.clone()){
-                                                    Color32::from_rgb(255,165,0) // make this configurable later
-                                                } else{
-                                                    ui.visuals().text_color()
-                                                };
-                                                ui.label(egui::RichText::new(&song.title)
-                                                .strong()
-                                                .color(color)
-                                                );
-                                                if ui.link(&song.artist).clicked(){
-                                                    //meow // WHY ARENT YOU CLICKABLEEE
+                        let response = ui
+                            .scope_builder(
+                                egui::UiBuilder::new()
+                                    .id_salt("song_card")
+                                    .sense(egui::Sense::click()),
+                                |ui| {
+                                    let response = ui.response();
+                                    let visuals = ui.style().interact(&response);
+                                    let text_color = visuals.text_color();
+
+                                    egui::Frame::canvas(ui.style())
+                                        .fill(visuals.bg_fill.gamma_multiply(0.3))
+                                        //.stroke(visuals.bg_stroke)
+                                        //.inner_margin(ui.spacing().menu_margin)
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                if let Some(tex) = &song.texture {
+                                                    ui.add(
+                                                egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
+                                                        .max_width(30.0)
+                                                        .corner_radius(10),
+                                                    );
+                                                } else {
+                                                    ui.label("img not found"); // TODO: "no album" image instead of text
                                                 }
+                                                ui.vertical(|ui| {
+                                                    // song & artist names
+                                                    let color = if self.now_playing
+                                                        == Some(song.path.clone())
+                                                    {
+                                                        Color32::from_rgb(255, 165, 0) // make this configurable later
+                                                    } else {
+                                                        ui.visuals().text_color()
+                                                    };
+                                                    ui.label(
+                                                        egui::RichText::new(&song.title)
+                                                            .strong()
+                                                            .color(color),
+                                                    );
+                                                    if ui.link(&song.artist).clicked() {
+                                                        //
+                                                    }
+                                                });
+                                                ui.label("album name");
+                                                ui.label(format!("{}", song.length));
                                             });
                                         });
-                                    });
-                                    header.col(|ui| {
-                                        // todo: why doesnt this show up
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(30.0);
-                                            ui.label("nyaaaaaaaa"); //todo: album name here
-                                        });
-                                    });
-                                    header.col(|ui| {
-                                        // todo: shouldn't be part of the table.
-                                        ui.vertical_centered(|ui| {
-                                            ui.label(format!("{}", song.length)); // this will need to convert whatever songs have (probably ms) into H:M:S format in the future
-                                        });
-                                    });
-                                });
-                            //});
-                        });
-                        
+                                },
+                            )
+                            .response;
+                        if response.clicked() {
+                            clicked_song_index = Some(i);
+                        }
+
                         if self.row_height.is_none() {
-                            self.row_height = Some(group_card.response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
+                            self.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
                         } // this really only needs to be done on startup (and maybe zoom)
 
-                        let group_card = group_card.response.interact(egui::Sense::click());
-                        if self.now_playing == Some(song.path.clone()) {
+                        //let group_card = group_card.response.interact(egui::Sense::click());
+                        /*if self.now_playing == Some(song.path.clone()) {
                             ui.painter().rect_filled(
                                 group_card.rect,
                                 4.0,
                                 egui::Color32::from_white_alpha(10),
                             );
-                        }
-                        if group_card.clicked() {
-                            song.playing = true;
-                            let path = song.path.clone();
-                            self.now_playing = Some(path.clone());
-                            self.now_playing_song = Some(song.clone());
-                            play_song(self, path);
-                        }
+                        }*/
 
-                        if group_card.hovered() {
+                        /*if group_card.hovered() {
                             // Paint a background rectangle behind the group
                             // We use visuals.bg_fill and visuals.rounding to stay 100% on-theme
                             ui.painter().rect_filled(
@@ -624,7 +629,17 @@ impl eframe::App for TemplateApp {
                                 4.0,
                                 egui::Color32::from_white_alpha(10),
                             );
-                        }
+                        }*/
+                    }
+
+                    if let Some(idx) = clicked_song_index {
+                        let song = &self.songs.articles[idx];
+                        let path = song.path.clone();
+
+                        self.now_playing = Some(path.clone());
+                        self.now_playing_song = Some(song.clone());
+
+                        play_song(self, path);
                     }
 
                     let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
