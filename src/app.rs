@@ -460,181 +460,164 @@ impl eframe::App for TemplateApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // central panel has to be rendered after other panels
-            egui::TopBottomPanel::bottom("meowww")
-                .resizable(true)
+            egui::TopBottomPanel::top("Header")
+                .resizable(false)
                 .min_height(50.0)
                 .show(ctx, |ui| {
-                    ui.label("Meow");
+                    ui.horizontal(|ui| {
+                        let playlist_name = self
+                            .currently_selected_playlist
+                            .as_deref()
+                            .unwrap_or("No playlist selected");
+                        ui.label(egui::RichText::new(playlist_name).size(32.0).strong());
+                    });
                 });
-            ui.horizontal(|ui| {
-                let playlist_name = self
-                    .currently_selected_playlist
-                    .as_deref()
-                    .unwrap_or("No playlist selected");
-                ui.label(egui::RichText::new(playlist_name).size(32.0).strong());
-            });
-            let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
-            let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
-            let col1_width = self.col1_width.unwrap_or(30.0);
-            let col2_width = self.col2_width.unwrap_or(100.0); // when there's not enough space for everything, it crashes! fix that.
-            let last_column_width = available_width - (20.0 + col2_width + col_time_width); // proper row height: it feels wrong to be setting this every frame. todo: optimize that
-            ui.group(|ui| {
-                TableBuilder::new(ui)
-                    .column(Column::exact(20.0))
-                    .column(
-                        Column::initial(col2_width)
-                            .resizable(true)
-                            .at_least(50.0)
-                            .at_most(available_width - col_time_width - 50.0),
-                    ) //todo: remember this on program restart
-                    .column(Column::exact(last_column_width))
-                    .column(Column::exact(col_time_width))
-                    .header(20.0, |mut header| {
-                        // this is the top table
-                        header.col(|ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.heading("#");
+            egui::TopBottomPanel::top("Resizables")
+                .resizable(false)
+                //.min_height(50.0)
+                .show(ctx, |ui| {
+                    // Use ui.horizontal to place items side-by-side
+                    ui.horizontal(|ui| {
+                        ui.label("#");
+                        ui.separator();
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        egui::Resize::default()
+                            .id_salt("Title")
+                            .default_width(100.0)
+                            .min_height(ui.available_height())
+                            .max_height(ui.available_height())
+                            .with_stroke(false)
+                            .show(ui, |ui| {
+                                ui.label("Title");
                             });
-                        });
-                        header.col(|ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.heading("Name");
-                                self.col2_width = Some(ui.available_width());
-                            });
-                        });
-                        header.col(|ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.heading("Album");
-                                self.col1_width = Some(ui.available_width());
-                            });
-                        });
-                        header.col(|ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.heading("Time");
-                            });
-                        });
-                    })
-                    .body(|mut body| {
-                        body.row(0.0, |mut row| {
-                            row.col(|_ui| {});
-                            row.col(
-                                |_ui| { // urghh the grabby bits are actually attached to these so u cant remove these empty cells
-                                },
-                            );
-                            row.col(|_ui| {});
-                            row.col(|_ui| {});
+                        
+                        ui.separator();
+                        
+                        ui.label("Album");
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(10.0);
+                            ui.label("🕑");
+                            ui.separator();
                         });
                     });
-            });
-            ScrollArea::vertical()
-                //.max_width(available_width-5.0)
-                .show(ui, |ui| {
-                    // render buffer stuff
-                    let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
-                    let total_rows = self.songs.articles.len(); // it feels wrong to be setting this every frame. this only really needs to be set if the shown list changes.
+                });
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let available_width = ui.available_width(); // todo: if there becomes more things that only need to happen on window resize, should create a check for if window resized.
+                let col_time_width = 130.0; // defined here bc its used in many places and itd be annoying to change them both every time
+                let col1_width = self.col1_width.unwrap_or(30.0);
+                let col2_width = self.col2_width.unwrap_or(100.0); // when there's not enough space for everything, it crashes! fix that.
+                let last_column_width = available_width - (20.0 + col2_width + col_time_width); // proper row height: it feels wrong to be setting this every frame. todo: optimize that
 
-                    let clip_rect = ui.clip_rect();
-                    let top = clip_rect.top();
-                    let bottom = clip_rect.bottom();
+                ScrollArea::vertical()
+                    //.max_width(available_width-5.0)
+                    .show(ui, |ui| {
+                        // render buffer stuff
+                        let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
+                        let total_rows = self.songs.articles.len(); // it feels wrong to be setting this every frame. this only really needs to be set if the shown list changes.
 
-                    let mut start = ((top - ui.min_rect().top()) / row_height).floor() as usize;
-                    let mut end = ((bottom - ui.min_rect().top()) / row_height).ceil() as usize;
+                        let clip_rect = ui.clip_rect();
+                        let top = clip_rect.top();
+                        let bottom = clip_rect.bottom();
 
-                    let render_buffer_size = 5; // If fast scrolling causes images not to load, increase this.
+                        let mut start = ((top - ui.min_rect().top()) / row_height).floor() as usize;
+                        let mut end = ((bottom - ui.min_rect().top()) / row_height).ceil() as usize;
 
-                    start = start.saturating_sub(render_buffer_size);
-                    end = (end + render_buffer_size).min(total_rows);
+                        let render_buffer_size = 5; // If fast scrolling causes images not to load, increase this.
 
-                    let above_px = start as f32 * row_height;
-                    ui.add_space(above_px); // makes scroll bar look big (1/2)
-                    let mut clicked_song_index = None;
-                    for i in start..end {
+                        start = start.saturating_sub(render_buffer_size);
+                        end = (end + render_buffer_size).min(total_rows);
 
-                        let song = &mut self.songs.articles[i];
-                        song.load_texture_if_needed(ctx);
+                        let above_px = start as f32 * row_height;
+                        ui.add_space(above_px); // makes scroll bar look big (1/2)
+                        let mut clicked_song_index = None;
+                        for i in start..end {
+                            let song = &mut self.songs.articles[i];
+                            song.load_texture_if_needed(ctx);
 
-                        let response = ui
-                            .scope_builder(
-                                egui::UiBuilder::new()
-                                    .id_salt("song_card")
-                                    .sense(egui::Sense::click()),
-                                |ui| {
-                                    let response = ui.response();
-                                    let visuals = ui.style().interact(&response);
-                                    let text_color = visuals.text_color();
+                            let response = ui
+                                .scope_builder(
+                                    egui::UiBuilder::new()
+                                        .id_salt("song_card")
+                                        .sense(egui::Sense::click()),
+                                    |ui| {
+                                        let response = ui.response();
+                                        let visuals = ui.style().interact(&response);
+                                        let text_color = visuals.text_color();
 
-                                    egui::Frame::canvas(ui.style())
-                                        .fill(visuals.bg_fill.gamma_multiply(0.3))
-                                        //.stroke(visuals.bg_stroke)
-                                        .inner_margin(ui.spacing().menu_margin)
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                if let Some(tex) = &song.texture {
-                                                    ui.add(
+                                        egui::Frame::canvas(ui.style())
+                                            .fill(visuals.bg_fill.gamma_multiply(0.3))
+                                            //.stroke(visuals.bg_stroke)
+                                            .inner_margin(ui.spacing().menu_margin)
+                                            .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.horizontal(|ui| {
+                                                    if let Some(tex) = &song.texture {
+                                                        ui.add(
                                                 egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
                                                         .max_width(30.0)
                                                         .corner_radius(10),
                                                     );
-                                                } else {
-                                                    ui.label("img not found"); // TODO: "no album" image instead of text
-                                                }
-                                                ui.vertical(|ui| {
-                                                    // song & artist names
-                                                    let color = if self.now_playing
-                                                        == Some(song.path.clone())
-                                                    {
-                                                        Color32::from_rgb(255, 165, 0) // make this configurable later
                                                     } else {
-                                                        ui.visuals().text_color()
-                                                    };
-                                                    ui.label(
-                                                        egui::RichText::new(&song.title)
-                                                            .strong()
-                                                            .color(color),
-                                                    );
-                                                    if ui.link(&song.artist).clicked() {
-                                                        //
+                                                        ui.label("img not found"); // TODO: "no album" image instead of text
                                                     }
+                                                    ui.vertical(|ui| {
+                                                        // song & artist names
+                                                        let color = if self.now_playing
+                                                            == Some(song.path.clone())
+                                                        {
+                                                            Color32::from_rgb(255, 165, 0) // make this configurable later
+                                                        } else {
+                                                            ui.visuals().text_color()
+                                                        };
+                                                        ui.label(
+                                                            egui::RichText::new(&song.title)
+                                                                .strong()
+                                                                .color(color),
+                                                        );
+                                                        if ui.link(&song.artist).clicked() {
+                                                            //
+                                                        }
+                                                    });
+                                                    ui.label("album name");
+                                                    ui.label(format!("{}", song.length));
                                                 });
-                                                ui.label("album name");
-                                                ui.label(format!("{}", song.length));
                                             });
-                                        });
-                                },
-                            )
-                            .response;
-                        if response.double_clicked() {
-                            clicked_song_index = Some(i);
+                                    },
+                                )
+                                .response;
+                            if response.double_clicked() {
+                                clicked_song_index = Some(i);
+                            }
+
+                            if self.row_height.is_none() {
+                                self.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
+                            } // this really only needs to be done on startup (and maybe zoom)
+
+                            //let group_card = group_card.response.interact(egui::Sense::click());
+                            if self.now_playing == Some(song.path.clone()) {
+                                ui.painter().rect_filled(
+                                    response.rect,
+                                    4.0,
+                                    egui::Color32::from_white_alpha(10),
+                                );
+                            }
                         }
 
-                        if self.row_height.is_none() {
-                            self.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
-                        } // this really only needs to be done on startup (and maybe zoom)
+                        if let Some(idx) = clicked_song_index {
+                            let song = &self.songs.articles[idx];
+                            let path = song.path.clone();
 
-                        //let group_card = group_card.response.interact(egui::Sense::click());
-                        if self.now_playing == Some(song.path.clone()) {
-                            ui.painter().rect_filled(
-                                response.rect,
-                                4.0,
-                                egui::Color32::from_white_alpha(10),
-                            );
+                            self.now_playing = Some(path.clone());
+                            self.now_playing_song = Some(song.clone());
+
+                            play_song(self, path);
                         }
-                    }
 
-                    if let Some(idx) = clicked_song_index {
-                        let song = &self.songs.articles[idx];
-                        let path = song.path.clone();
-
-                        self.now_playing = Some(path.clone());
-                        self.now_playing_song = Some(song.clone());
-
-                        play_song(self, path);
-                    }
-
-                    let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
-                    ui.add_space(remaining_px); // makes scroll bar look big (2/2)  <- part of render buffer
-                });
+                        let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
+                        ui.add_space(remaining_px); // makes scroll bar look big (2/2)  <- part of render buffer
+                    });
+            });
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 egui::warn_if_debug_build(ui); // this was in the example thing and idk if its needed or if theres a benefit to removing it
