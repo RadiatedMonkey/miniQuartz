@@ -604,7 +604,7 @@ impl eframe::App for TemplateApp {
                                 },
                             )
                             .response;
-                        if response.clicked() {
+                        if response.double_clicked() {
                             clicked_song_index = Some(i);
                         }
 
