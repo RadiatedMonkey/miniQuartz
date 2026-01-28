@@ -566,7 +566,7 @@ impl eframe::App for TemplateApp {
                                     egui::Frame::canvas(ui.style())
                                         .fill(visuals.bg_fill.gamma_multiply(0.3))
                                         //.stroke(visuals.bg_stroke)
-                                        //.inner_margin(ui.spacing().menu_margin)
+                                        .inner_margin(ui.spacing().menu_margin)
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
                                             ui.horizontal(|ui| {
@@ -613,23 +613,13 @@ impl eframe::App for TemplateApp {
                         } // this really only needs to be done on startup (and maybe zoom)
 
                         //let group_card = group_card.response.interact(egui::Sense::click());
-                        /*if self.now_playing == Some(song.path.clone()) {
+                        if self.now_playing == Some(song.path.clone()) {
                             ui.painter().rect_filled(
-                                group_card.rect,
+                                response.rect,
                                 4.0,
                                 egui::Color32::from_white_alpha(10),
                             );
-                        }*/
-
-                        /*if group_card.hovered() {
-                            // Paint a background rectangle behind the group
-                            // We use visuals.bg_fill and visuals.rounding to stay 100% on-theme
-                            ui.painter().rect_filled(
-                                group_card.rect,
-                                4.0,
-                                egui::Color32::from_white_alpha(10),
-                            );
-                        }*/
+                        }
                     }
 
                     if let Some(idx) = clicked_song_index {
