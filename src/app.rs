@@ -1,24 +1,19 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
-use egui::Widget;
+use anyhow;
 use egui::{Color32, Id, Modal, ScrollArea};
-use egui_extras::{Column, TableBuilder};
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
+use gstreamer::tags;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, Sender};
 use url::Url;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
-    // Example stuff:
-    label: String,
-
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
-
-    #[serde(skip)] // Opting out of serialization needs this thing above it. What's serde?
-    songs: Songs, // I think this is basically doing what the 2021: 7a Rust tutorial said, but fits into the template given by egui. Probably better to do it like this? Feels cleaner.
+    #[serde(skip)]
+    songs: Songs,
 
     #[serde(skip)]
     row_height: Option<f32>,
@@ -57,6 +52,14 @@ pub struct TemplateApp {
     now_playing: Option<PathBuf>,
 
     now_playing_song: Option<SongCardData>,
+
+    #[serde(skip)]
+    metadata_receiver: Receiver<MetadataResult>,
+    #[serde(skip)]
+    metadata_sender: Sender<MetadataRequest>,
+
+    title_header_width: f32,
+    total_header_width: f32,
 }
 
 fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
@@ -72,17 +75,31 @@ fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
 
 impl Default for TemplateApp {
     fn default() -> Self {
-        gstreamer::init().expect("Failed to init GStreamer");
+        gstreamer::init().expect("Failed to init GStreamer"); // todo: expect should be an error message?
+
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<MetadataResult>();
+        let (req_tx, req_rx) = std::sync::mpsc::channel::<MetadataRequest>();
+
+        std::thread::spawn(move || {
+            let discoverer =
+                gstreamer_pbutils::Discoverer::new(gstreamer::ClockTime::from_seconds(5))
+                    .expect("Failed to create discoverer");
+
+            while let Ok(request) = req_rx.recv() {
+                if let Ok(metadata) = get_metadata(&discoverer, request.path.clone()) {
+                    let _ = result_tx.send(MetadataResult {
+                        path: request.path,
+                        data: metadata,
+                    });
+                }
+            }
+        });
 
         let pb = gstreamer::ElementFactory::make("playbin")
             .build()
             .expect("Could not create playbin");
 
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
-            // Not example stuff:
             songs: Songs::new(std::path::Path::new("./playlists/")),
             row_height: None,
             col1_width: None,
@@ -105,14 +122,22 @@ impl Default for TemplateApp {
             now_playing: None,
 
             now_playing_song: Some(SongCardData {
-                title: "none".to_owned(),
+                title: "".to_owned(),
                 artist: "none".to_owned(),  // todo: metadata
                 length: "--:--".to_owned(), // todo: parse
+                album: "none".to_owned(),
                 cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
                 path: std::path::PathBuf::from(""),
                 texture: None,
                 playing: false,
+                metadata_loaded: false,
             }),
+
+            metadata_receiver: result_rx,
+            metadata_sender: req_tx,
+
+            title_header_width: 250.0,
+            total_header_width: 0.0,
         }
     }
 }
@@ -157,6 +182,7 @@ struct Songs {
 struct SongCardData {
     title: String,
     artist: String,
+    album: String,
     length: String,
     cover_path: String,
     path: std::path::PathBuf,
@@ -164,6 +190,7 @@ struct SongCardData {
     // Serde cant do this... so album cover views should be loaded on startup, too. Later.
     texture: Option<egui::TextureHandle>,
     playing: bool,
+    metadata_loaded: bool,
 }
 
 impl Songs {
@@ -192,11 +219,13 @@ impl Songs {
                 SongCardData {
                     title: file_name,
                     artist: "Unknown Artist".to_owned(), // todo: metadata
-                    length: "--:--".to_owned(),          // todo: parse
+                    album: "Unknown Album".to_owned(),
+                    length: "--:--".to_owned(), // todo: parse
                     cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
-                    path: path.clone(),                  // at most adds 20kb of memory use
+                    path: path.clone(),         // at most adds 20kb of memory use
                     texture: None,
                     playing: false,
+                    metadata_loaded: false,
                 }
             });
 
@@ -230,6 +259,19 @@ fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
         .to_file_path()
         .map_err(|_| "Invalid URI".into())
 }
+
+fn path_to_uri(path: std::path::PathBuf) -> String {
+    let abs_path = path.canonicalize().unwrap_or(path.clone());
+    let path_str = abs_path.to_string_lossy().to_string();
+
+    let cleaned_path = path_str // this will probably need to be changed for android. God how the hell do you builkd for Android. Rafgh.
+        .replace("\\\\?\\", "")
+        .replace("\\", "/");
+
+    let uri = format!("file:///{}", cleaned_path);
+    uri
+}
+
 fn show_error(app: &mut TemplateApp, error: String) {
     app.error_value = error;
     app.error_show = true;
@@ -239,16 +281,9 @@ fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
     let _ = app.playbin.set_state(gstreamer::State::Null);
 
     let cubic_volume = (app.volume * app.volume * app.volume) as f64; // cubic slider & gstreamer needs f64
-    app.playbin.set_property("volume", cubic_volume);
+    app.playbin.set_property("volume", cubic_volume); // set volume when you play a song for some reason i forgot. check probably. didnt make a comment b4, whoops
 
-    let abs_path = path.canonicalize().unwrap_or(path.clone());
-    let path_str = abs_path.to_string_lossy().to_string();
-
-    let cleaned_path = path_str // this will probably need to be changed for android. God how the hell do you builkd for Android. Rafgh.
-        .replace("\\\\?\\", "")
-        .replace("\\", "/");
-
-    let uri = format!("file:///{}", cleaned_path);
+    let uri = path_to_uri(path.clone());
 
     app.playbin.set_property("uri", &uri);
 
@@ -261,6 +296,83 @@ fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
         let _ = app.playbin.set_state(gstreamer::State::Null);
     } else {
         app.now_playing = Some(path);
+    }
+}
+
+struct Metadata {
+    title: String,
+    artist: String,
+    album: String,
+    cover_data: Option<Vec<u8>>,
+}
+
+fn get_metadata(
+    discoverer: &gstreamer_pbutils::Discoverer,
+    path: std::path::PathBuf,
+) -> Result<Metadata, anyhow::Error> {
+    let uri = path_to_uri(path);
+    let info = discoverer.discover_uri(&uri)?;
+
+    let tags = info.tags();
+
+    let title = tags
+        .as_ref()
+        .and_then(|t| t.get::<tags::Title>())
+        .map(|t| t.get().to_string())
+        .unwrap_or_else(|| "".to_string());
+
+    let artist = tags
+        .as_ref()
+        .and_then(|t| t.get::<tags::Artist>())
+        .map(|a| a.get().to_string())
+        .unwrap_or_else(|| "Unknown Artist".to_string());
+
+    let album = tags
+        .as_ref()
+        .and_then(|t| t.get::<tags::Album>())
+        .map(|al| al.get().to_string())
+        .unwrap_or_else(|| "Unknown Album".to_string());
+
+    let cover_data = tags //blegh...
+        .as_ref()
+        .and_then(|t| {
+            t.get::<tags::Image>()
+                .or_else(|| t.get::<tags::Attachment>())
+        })
+        .and_then(|sample_obj| {
+            let sample = sample_obj.get();
+            let buffer = sample.buffer()?;
+            let map = buffer.map_readable().ok()?;
+            Some(map.as_slice().to_vec())
+        });
+
+    Ok(Metadata {
+        title,
+        artist,
+        album,
+        cover_data,
+    })
+}
+
+struct MetadataRequest {
+    path: std::path::PathBuf,
+}
+
+struct MetadataResult {
+    path: std::path::PathBuf,
+    data: Metadata,
+}
+
+fn load_metadata_if_needed(
+    song: &mut SongCardData,
+    sender: std::sync::mpsc::Sender<MetadataRequest>,
+) {
+    if !song.metadata_loaded {
+        song.metadata_loaded = true;
+
+        let _ = sender.send(MetadataRequest {
+            path: song.path.clone(),
+        });
     }
 }
 
@@ -300,6 +412,9 @@ impl eframe::App for TemplateApp {
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if (ui.button("Meoooww")).clicked() {
+                            show_error(self, "Meow Button Pressed".to_owned());
                         }
                     });
                     ui.add_space(16.0);
@@ -394,34 +509,28 @@ impl eframe::App for TemplateApp {
                             });
                         }
 
-                        if ui.button("Play test audio").clicked() {
-                            // debug button. Gstream should be handled more elegantly than this.
-                            play_song(
-                                self,
-                                std::path::PathBuf::from("playlists/Playlist 2/forever.mp3"),
-                            );
-                        }
-
                         /////
                         // Play/pause button
                         if ui.button("Play/Pause").clicked() {
-                            let (_success, current, _pending) = self.playbin.state(gstreamer::ClockTime::NONE); // todo: i think i'm checking this a few times per loop. should make this check once and set a variable
+                            let (_success, current, _pending) =
+                                self.playbin.state(gstreamer::ClockTime::NONE); // todo: i think i'm checking this a few times per loop. should make this check once and set a variable
                             if current == gstreamer::State::Playing {
                                 if let Err(err) = self.playbin.set_state(gstreamer::State::Paused) {
                                     show_error(self, err.to_string());
                                 }
                             } else if current == gstreamer::State::Paused {
-                                if let Err(err) = self.playbin.set_state(gstreamer::State::Playing) {
+                                if let Err(err) = self.playbin.set_state(gstreamer::State::Playing)
+                                {
                                     show_error(self, err.to_string());
                                 }
                             } else {
-                                let song_path = self.now_playing_song.as_ref().map(|s| s.path.clone());
+                                let song_path =
+                                    self.now_playing_song.as_ref().map(|s| s.path.clone());
                                 if let Some(path) = song_path {
                                     play_song(self, path);
-                                } else{
+                                } else {
                                     show_error(self, "No song ready to play".to_owned()); // This should be removed in the future. Expected behaviour would be to disable the play/pause button.
                                 }
-                                
                             }
                         }
 
@@ -491,7 +600,7 @@ impl eframe::App for TemplateApp {
                 .resizable(false)
                 //.min_height(50.0)
                 .show(ctx, |ui| {
-                    // Use ui.horizontal to place items side-by-side
+                    self.total_header_width = ui.available_width();
                     ui.horizontal(|ui| {
                         ui.label("#");
                         ui.separator();
@@ -499,11 +608,13 @@ impl eframe::App for TemplateApp {
                         egui::Resize::default()
                             .id_salt("Title")
                             .default_width(100.0)
+                            .max_width(self.total_header_width-110.0)
                             .min_height(ui.available_height())
                             .max_height(ui.available_height())
                             .with_stroke(false)
                             .show(ui, |ui| {
                                 ui.label("Title");
+                                self.title_header_width = ui.available_width();
                             });
 
                         ui.separator();
@@ -511,8 +622,8 @@ impl eframe::App for TemplateApp {
                         ui.label("Album");
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_space(10.0);
-                            ui.label("🕑");
+                            ui.add_space(20.0);
+                            ui.label("🕒");
                             ui.separator();
                         });
                     });
@@ -533,7 +644,7 @@ impl eframe::App for TemplateApp {
                         let mut start = ((top - ui.min_rect().top()) / row_height).floor() as usize;
                         let mut end = ((bottom - ui.min_rect().top()) / row_height).ceil() as usize;
 
-                        let render_buffer_size = 5; // If fast scrolling causes images not to load, increase this.
+                        let render_buffer_size = 8; // If fast scrolling causes metadata not to load, increase this.
 
                         start = start.saturating_sub(render_buffer_size);
                         end = (end + render_buffer_size).min(total_rows);
@@ -541,10 +652,27 @@ impl eframe::App for TemplateApp {
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
                         let mut clicked_song_index = None;
+
+                        for result in self.metadata_receiver.try_iter().take(20) {
+                            if let Some(song) = self
+                                .songs
+                                .articles
+                                .iter_mut()
+                                .find(|s| s.path == result.path)
+                            {
+                                song.album = result.data.album;
+                                song.artist = result.data.artist;
+                                if result.data.title != "" {
+                                    song.title = result.data.title;
+                                }
+                                // song.cover_data = result.data.cover_data; // song covers should not be stored in ram.
+                            }
+                        }
+
                         for i in start..end {
                             let song = &mut self.songs.articles[i];
+                            load_metadata_if_needed(song, self.metadata_sender.clone());
                             song.load_texture_if_needed(ctx);
-
                             let response = ui
                                 .scope_builder(
                                     egui::UiBuilder::new()
@@ -553,44 +681,71 @@ impl eframe::App for TemplateApp {
                                     |ui| {
                                         let response = ui.response();
                                         let visuals = ui.style().interact(&response);
-                                        let text_color = visuals.text_color();
 
                                         egui::Frame::canvas(ui.style())
                                             .fill(visuals.bg_fill.gamma_multiply(0.3))
                                             //.stroke(visuals.bg_stroke)
                                             .inner_margin(ui.spacing().menu_margin)
                                             .show(ui, |ui| {
-                                                ui.set_width(ui.available_width());
                                                 ui.horizontal(|ui| {
-                                                    if let Some(tex) = &song.texture {
-                                                        ui.add(
-                                                egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
-                                                        .max_width(30.0)
-                                                        .corner_radius(10),
-                                                    );
-                                                    } else {
-                                                        ui.label("img not found"); // TODO: "no album" image instead of text
-                                                    }
-                                                    ui.vertical(|ui| {
-                                                        // song & artist names
-                                                        let color = if self.now_playing
-                                                            == Some(song.path.clone())
-                                                        {
-                                                            Color32::from_rgb(255, 165, 0) // make this configurable later
-                                                        } else {
-                                                            ui.visuals().text_color()
-                                                        };
-                                                        ui.label(
-                                                            egui::RichText::new(&song.title)
-                                                                .strong()
-                                                                .color(color),
+                                                    ui.label(i.to_string());
+                                                    ui.scope(|ui| {
+                                                        ui.set_width(
+                                                            self.title_header_width + 25.0,
                                                         );
-                                                        if ui.link(&song.artist).clicked() {
-                                                            //
+                                                        if let Some(tex) = &song.texture {
+                                                            ui.add(
+                                                        egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
+                                                                .max_width(30.0)
+                                                                .corner_radius(10),
+                                                            );
+                                                        } else {
+                                                            ui.label("img not found"); // TODO: "no album" image instead of text
                                                         }
+                                                        ui.vertical(|ui| {
+                                                            // song & artist names
+                                                            let color = if self.now_playing
+                                                                == Some(song.path.clone())
+                                                            {
+                                                                Color32::from_rgb(255, 165, 0) // make this configurable later
+                                                            } else {
+                                                                ui.visuals().text_color()
+                                                            };
+                                                            ui.add(
+                                                                egui::Label::new(&song.title)
+                                                                    .truncate(),
+                                                            );
+                                                            ui.add(
+                                                                egui::Label::new(&song.artist)
+                                                                    .truncate(),
+                                                            );
+                                                        });
                                                     });
-                                                    ui.label("album name");
-                                                    ui.label(format!("{}", song.length));
+                                                    let remaining_width = ui.available_width() - 60.0;
+                                                    ui.allocate_ui_with_layout(
+                                                        egui::vec2(
+                                                            remaining_width,
+                                                            ui.available_height(),
+                                                        ),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            ui.add(
+                                                                egui::Label::new(&song.album)
+                                                                    .truncate(),
+                                                            );
+                                                        },
+                                                    );
+                                                    ui.with_layout(
+                                                        egui::Layout::right_to_left(
+                                                            egui::Align::TOP,
+                                                        ),
+                                                        |ui| {
+                                                            ui.add_space(10.0);
+                                                            ui.label(format!("{}", &song.length));
+                                                        },
+                                                    );
                                                 });
                                             });
                                     },
