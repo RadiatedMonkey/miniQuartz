@@ -608,7 +608,7 @@ impl eframe::App for TemplateApp {
                         egui::Resize::default()
                             .id_salt("Title")
                             .default_width(100.0)
-                            .max_width(self.total_header_width-110.0)
+                            .max_width(self.total_header_width - 110.0)
                             .min_height(ui.available_height())
                             .max_height(ui.available_height())
                             .with_stroke(false)
@@ -681,9 +681,14 @@ impl eframe::App for TemplateApp {
                                     |ui| {
                                         let response = ui.response();
                                         let visuals = ui.style().interact(&response);
-
-                                        egui::Frame::canvas(ui.style())
-                                            .fill(visuals.bg_fill.gamma_multiply(0.3))
+                                        let fill_color =
+                                            if response.hovered() || response.has_focus() {
+                                                visuals.bg_fill.gamma_multiply(0.3)
+                                            } else {
+                                                egui::Color32::TRANSPARENT
+                                            };
+                                        egui::Frame::none()
+                                            .fill(fill_color)
                                             //.stroke(visuals.bg_stroke)
                                             .inner_margin(ui.spacing().menu_margin)
                                             .show(ui, |ui| {
@@ -707,13 +712,19 @@ impl eframe::App for TemplateApp {
                                                             let color = if self.now_playing
                                                                 == Some(song.path.clone())
                                                             {
-                                                                Color32::from_rgb(255, 165, 0) // make this configurable later
+                                                                Color32::from_rgb(255, 128, 0) // make this configurable later
                                                             } else {
                                                                 ui.visuals().text_color()
                                                             };
                                                             ui.add(
-                                                                egui::Label::new(&song.title)
-                                                                    .truncate(),
+                                                                egui::Label::new(
+                                                                    egui::RichText::new(
+                                                                        &song.title,
+                                                                    )
+                                                                    .color(color)
+                                                                    .strong(),
+                                                                )
+                                                                .truncate(),
                                                             );
                                                             ui.add(
                                                                 egui::Label::new(&song.artist)
@@ -721,7 +732,8 @@ impl eframe::App for TemplateApp {
                                                             );
                                                         });
                                                     });
-                                                    let remaining_width = ui.available_width() - 60.0;
+                                                    let remaining_width =
+                                                        ui.available_width() - 60.0;
                                                     ui.allocate_ui_with_layout(
                                                         egui::vec2(
                                                             remaining_width,
