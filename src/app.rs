@@ -350,13 +350,15 @@ fn get_metadata(
             let map = buffer.map_readable().ok()?;
             Some(map.as_slice().to_vec())
         });
+
     let mut hasher = DefaultHasher::new();
     uri.hash(&mut hasher);
     let unique_id = hasher.finish();
     let output_path_str = format!("cache/cover_{}.jpg", unique_id); // todo: figure out how to get a unique id for each song, this is not the right way to do this. should be based off file name and location + metadata
     let output_path = PathBuf::from(output_path_str.clone());
 
-    if let Some(parent) = output_path.parent() { // checking if cache folder exists
+    if let Some(parent) = output_path.parent() {
+        // checking if cache folder exists
         std::fs::create_dir_all(parent).unwrap_or_default();
     }
 
@@ -490,8 +492,17 @@ impl eframe::App for TemplateApp {
                             let duration = self.duration_ms.max(1) as f32;
                             let mut pos = self.position_ms as f32;
 
-                            let response = ui
-                                .add(egui::Slider::new(&mut pos, 0.0..=duration).text("Position"));
+                            let response = ui.add(
+                                egui::Slider::new(&mut pos, 0.0..=duration)
+                                    .text("Position")
+                                    .trailing_fill(true)
+                                    .custom_formatter(|n, _| {
+                                        let total_seconds = (n / 1000.0) as i64;
+                                        let minutes = total_seconds / 60;
+                                        let seconds = total_seconds % 60;
+                                        format!("{:02}:{:02}", minutes, seconds)
+                                    }),
+                            );
                             if response.changed() {
                                 let seek_to = gstreamer::ClockTime::from_mseconds(pos as u64);
 
@@ -576,7 +587,9 @@ impl eframe::App for TemplateApp {
                         /////
                         // Volume slider
                         let response_volume = ui.add(
-                            egui::Slider::new(&mut self.volume, 0.0..=1.0).text("Volume"), // 1.0 here is the max volume
+                            egui::Slider::new(&mut self.volume, 0.0..=1.0)
+                                .text("Volume")
+                                .trailing_fill(true), // 1.0 here is the max volume
                         );
                         if response_volume.changed() {
                             let cubic_volume = (self.volume * self.volume * self.volume) as f64; // cubic slider & gstreamer needs f64
