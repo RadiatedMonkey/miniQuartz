@@ -1,9 +1,14 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
+use core::hash;
 use egui::{Color32, Id, Modal, ScrollArea};
+use gstreamer::caps::HasFeatures;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
+use image::imageops::FilterType;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use url::Url;
@@ -126,7 +131,7 @@ impl Default for TemplateApp {
                 artist: "none".to_owned(),  // todo: metadata
                 length: "--:--".to_owned(), // todo: parse
                 album: "none".to_owned(),
-                cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
+                cover_path: "".to_owned(), //todo: metadata
                 path: std::path::PathBuf::from(""),
                 texture: None,
                 playing: false,
@@ -178,7 +183,7 @@ struct Songs {
     articles: Vec<SongCardData>,
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)] // This is so serde knows wat 2 do
+#[derive(Clone, serde::Deserialize, serde::Serialize)] // This is so serde knows wat 2 do. Using serde here to store the last playing song
 struct SongCardData {
     title: String,
     artist: String,
@@ -221,7 +226,7 @@ impl Songs {
                     artist: "Unknown Artist".to_owned(), // todo: metadata
                     album: "Unknown Album".to_owned(),
                     length: "--:--".to_owned(), // todo: parse
-                    cover_path: "assets/icon-256.png".to_owned(), //todo: metadata
+                    cover_path: "".to_owned(),  //todo: metadata
                     path: path.clone(),         // at most adds 20kb of memory use
                     texture: None,
                     playing: false,
@@ -303,7 +308,7 @@ struct Metadata {
     title: String,
     artist: String,
     album: String,
-    cover_data: Option<Vec<u8>>,
+    cover_path: String,
 }
 
 fn get_metadata(
@@ -345,12 +350,46 @@ fn get_metadata(
             let map = buffer.map_readable().ok()?;
             Some(map.as_slice().to_vec())
         });
+    let mut hasher = DefaultHasher::new();
+    uri.hash(&mut hasher);
+    let unique_id = hasher.finish();
+    let output_path_str = format!("cache/cover_{}.jpg", unique_id); // todo: figure out how to get a unique id for each song, this is not the right way to do this. should be based off file name and location + metadata
+    let output_path = PathBuf::from(output_path_str.clone());
+
+    if let Some(parent) = output_path.parent() { // checking if cache folder exists
+        std::fs::create_dir_all(parent).unwrap_or_default();
+    }
+
+    if let Some(data) = cover_data {
+        if !output_path.exists() {
+            match image::load_from_memory(&data) {
+                Ok(img) => {
+                    let resized = img.resize(96, 96, FilterType::Lanczos3);
+                    if let Err(e) = resized.save(output_path) {
+                        return Ok(Metadata {
+                            title: "Album cover save error".to_owned(),
+                            artist: "This is how im sending the error message".to_owned(),
+                            album,
+                            cover_path: "assets/icon-256.png".to_owned(),
+                        });
+                    }
+                }
+                Err(e) => eprintln!("error: {}", e),
+            }
+        }
+        return Ok(Metadata {
+            title,
+            artist,
+            album,
+            cover_path: output_path_str,
+        });
+    }
 
     Ok(Metadata {
         title,
         artist,
         album,
-        cover_data,
+        cover_path: "assets/icon-256.png".to_owned(),
     })
 }
 
@@ -665,6 +704,7 @@ impl eframe::App for TemplateApp {
                                 if result.data.title != "" {
                                     song.title = result.data.title;
                                 }
+                                song.cover_path = result.data.cover_path;
                                 // song.cover_data = result.data.cover_data; // song covers should not be stored in ram.
                             }
                         }
@@ -700,12 +740,12 @@ impl eframe::App for TemplateApp {
                                                         );
                                                         if let Some(tex) = &song.texture {
                                                             ui.add(
-                                                        egui::Image::new(tex) // TODO: Images are currently stored at native resolution and then scaled down here. They should be stored at display resolution.
-                                                                .max_width(30.0)
-                                                                .corner_radius(10),
+                                                                egui::Image::new(tex)
+                                                                    .max_width(30.0)
+                                                                    .corner_radius(3), // todo: this should be user configurable. some people haaate corner radius on album art
                                                             );
                                                         } else {
-                                                            ui.label("img not found"); // TODO: "no album" image instead of text
+                                                            ui.label("..."); // TODO: "no album" image instead of text
                                                         }
                                                         ui.vertical(|ui| {
                                                             // song & artist names
