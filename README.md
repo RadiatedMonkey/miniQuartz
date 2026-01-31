@@ -8,7 +8,7 @@ The reason this exists is:
 Goals, in order of priority:
 1. Fast and lightweight cross-platform file playback.
 Windows and Android are the main focus, but Linux would be nice to have too.
-Basic features; queue, playlists, search, no stutter at high load
+Basic features; queue, playlists, search, no audio stutter at high load
 
 2. Soulseek (or torrent) search in-app
 Search bar should behave similarly to the ones on streaming services; make a search & you get a list of results you browse through.

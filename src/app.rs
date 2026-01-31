@@ -758,7 +758,11 @@ impl eframe::App for TemplateApp {
                                                                     .corner_radius(3), // todo: this should be user configurable. some people haaate corner radius on album art
                                                             );
                                                         } else {
-                                                            ui.label("..."); // TODO: "no album" image instead of text
+                                                            ui.add(
+                                                                egui::Spinner::new()
+                                                                    .size(30.0)
+                                                                    .color(egui::Color32::BLUE),
+                                                            );
                                                         }
                                                         ui.vertical(|ui| {
                                                             // song & artist names
