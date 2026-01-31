@@ -6,9 +6,12 @@ use gstreamer::caps::HasFeatures;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
 use image::imageops::FilterType;
+use serde::Deserialize;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use url::Url;
@@ -51,6 +54,9 @@ pub struct TemplateApp {
     #[serde(skip)]
     folders: Vec<std::path::PathBuf>,
 
+    #[serde(skip)]
+    playlists: Vec<std::path::PathBuf>,
+
     currently_selected_playlist: Option<String>,
     currently_selected_playlist_path: Option<PathBuf>,
 
@@ -68,7 +74,6 @@ pub struct TemplateApp {
 }
 
 fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
-    // Move this function to the functions area later, just here for ease of editing rn.
     let entries = fs::read_dir(path)?; // Read the directory contents
     let folders = entries
         .filter_map(|entry| entry.ok()) // Ignore entries with errors (e.g., permission issues)
@@ -76,6 +81,19 @@ fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
         .map(|entry| entry.path()) // Convert DirEntry to PathBuf
         .collect();
     Ok(folders)
+}
+
+fn get_playlists(path: &str) -> std::io::Result<Vec<PathBuf>> {
+    let entries = fs::read_dir(path)?;
+    let json_files = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let path = entry.path();
+            path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+        })
+        .map(|entry| entry.path())
+        .collect();
+    Ok(json_files)
 }
 
 impl Default for TemplateApp {
@@ -105,7 +123,7 @@ impl Default for TemplateApp {
             .expect("Could not create playbin");
 
         Self {
-            songs: Songs::new(std::path::Path::new("./playlists/")),
+            songs: Songs::new(&std::path::PathBuf::from("./playlists/")),
             row_height: None,
             col1_width: None,
             col2_width: None,
@@ -120,6 +138,7 @@ impl Default for TemplateApp {
             volume: 1.0,
 
             folders: get_folders("./playlists/").unwrap_or_default(),
+            playlists: get_playlists("./playlists/").unwrap_or_default(),
 
             currently_selected_playlist: None,
             currently_selected_playlist_path: Some(std::path::PathBuf::from("")),
@@ -192,47 +211,54 @@ struct SongCardData {
     cover_path: String,
     path: std::path::PathBuf,
     #[serde(skip)]
-    // Serde cant do this... so album cover views should be loaded on startup, too. Later.
     texture: Option<egui::TextureHandle>,
     playing: bool,
     metadata_loaded: bool,
 }
 
+#[derive(Deserialize)]
+struct SongManifest {
+    song_locations: Vec<PathBuf>,
+}
+
 impl Songs {
-    pub fn new(folder_path: &Path) -> Songs {
-        let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a"];
+    pub fn new(json_path: &PathBuf) -> Songs {
+        let file = match File::open(json_path) {
+            Ok(f) => f,
+            Err(_) => {
+                //eprintln!("Warning: Could not open playlist file.");
+                return Songs { articles: vec![] };
+            }
+        };
 
-        let iter = fs::read_dir(folder_path)
-            .into_iter() // Handle potential errors reading the folder
-            .flatten()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|ext| audio_extensions.contains(&ext.to_lowercase().as_str()))
-                        .unwrap_or(false)
-            })
-            .map(|path| {
-                let file_name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown Track".to_string());
+        let reader = BufReader::new(file);
 
-                SongCardData {
-                    title: file_name,
-                    artist: "Unknown Artist".to_owned(), // todo: metadata
-                    album: "Unknown Album".to_owned(),
-                    length: "--:--".to_owned(), // todo: parse
-                    cover_path: "".to_owned(),  //todo: metadata
-                    path: path.clone(),         // at most adds 20kb of memory use
-                    texture: None,
-                    playing: false,
-                    metadata_loaded: false,
-                }
-            });
+        let manifest: SongManifest = match serde_json::from_reader(reader) {
+            Ok(m) => m,
+            Err(_) => {
+                //eprintln!("Warning: Playlist JSON is malformed.");
+                return Songs { articles: vec![] };
+            }
+        };
+
+        let iter = manifest.song_locations.into_iter().map(|path| {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Unknown Track".to_string());
+
+            SongCardData {
+                title: file_name,
+                artist: "Unknown Artist".to_owned(),
+                album: "Unknown Album".to_owned(),
+                length: "--:--".to_owned(),
+                cover_path: "".to_owned(),
+                path,
+                texture: None,
+                playing: false,
+                metadata_loaded: false,
+            }
+        });
 
         Songs {
             articles: Vec::from_iter(iter),
@@ -303,7 +329,7 @@ fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
         app.now_playing = Some(path);
         app.duration_ms = 0;
         while app.duration_ms == 0 {
-        // this while loop is here because querying immediately returns 0. i believe gstreamer checks the duration in a diff thread, but this function would otherwise end before it can get it.
+            // this while loop is here because querying immediately returns 0. i believe gstreamer checks the duration in a diff thread, but this function would otherwise end before it can get it.
             if let Some(dur) = app.playbin.query_duration::<gstreamer::ClockTime>() {
                 app.duration_ms = dur.mseconds();
             }
@@ -359,7 +385,11 @@ fn get_metadata(
         });
 
     let mut hasher = DefaultHasher::new();
-    uri.hash(&mut hasher);
+    if (album != "Unknown Artist" && artist != "Unknown Artist") {
+        format!("{}{}", album, artist).hash(&mut hasher); // this is like this so that we don't cache multiple of the same cover
+    } else {
+        uri.hash(&mut hasher);
+    }
     let unique_id = hasher.finish();
     let output_path_str = format!("cache/cover_{}.jpg", unique_id); // todo: figure out how to get a unique id for each song, this is not the right way to do this. should be based off file name and location + metadata
     let output_path = PathBuf::from(output_path_str.clone());
@@ -614,19 +644,20 @@ impl eframe::App for TemplateApp {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.set_min_width(ui.available_width()); // this makes smooth resizing possible. feels kinda jank but whatever.
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        for folder in &self.folders {
-                            //let folder_path = folder.display().to_string(); // will need this for getting songs in the folder
-                            let folder_name = folder
+                        for playlist in &self.playlists {
+                            let playlist_name = playlist
                                 .file_name()
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_else(|| "Unknown".to_string());
                             if ui
-                                .selectable_label(false, format!("📁 {}", folder_name))
+                                .selectable_label(false, format!("📁 {}", playlist_name))
                                 .clicked()
                             {
-                                self.currently_selected_playlist = Some(folder_name.clone());
-                                self.currently_selected_playlist_path = Some(folder.clone());
-                                self.songs = Songs::new(folder);
+                                self.songs =
+                                    Songs::new(playlist);
+                                self.currently_selected_playlist =
+                                    Some(playlist_name);
+                                self.currently_selected_playlist_path = Some(playlist.to_path_buf());
                             }
                         }
                     })

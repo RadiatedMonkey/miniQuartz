@@ -12,5 +12,5 @@ target_wasm
 # https://github.com/lycheeverse/lychee
 .lycheecache
 
-playlists/*
+playlists/playlist-1
 cache/*
