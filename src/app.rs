@@ -301,6 +301,13 @@ fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
         let _ = app.playbin.set_state(gstreamer::State::Null);
     } else {
         app.now_playing = Some(path);
+        app.duration_ms = 0;
+        while app.duration_ms == 0 {
+        // this while loop is here because querying immediately returns 0. i believe gstreamer checks the duration in a diff thread, but this function would otherwise end before it can get it.
+            if let Some(dur) = app.playbin.query_duration::<gstreamer::ClockTime>() {
+                app.duration_ms = dur.mseconds();
+            }
+        }
     }
 }
 
@@ -526,16 +533,11 @@ impl eframe::App for TemplateApp {
                             {
                                 self.position_ms = pos.mseconds();
                             }
-                            // Set duration Todo: This only needs to be done when starting playback. Not every frame.
-                            if let Some(dur) = self.playbin.query_duration::<gstreamer::ClockTime>()
-                            {
-                                self.duration_ms = dur.mseconds();
-                            }
                             self.last_update = std::time::Instant::now();
                         }
 
                         if self.error_show {
-                            // todo: error function that will do this. cause this isnt the only error
+                            // this should be a separate function
                             Modal::new(Id::new("IO Error")).show(ui.ctx(), |ui| {
                                 ui.set_width(200.0);
                                 ui.heading("Error");
