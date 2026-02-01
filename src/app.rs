@@ -1,8 +1,6 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
-use core::hash;
 use egui::{Color32, Id, Modal, ScrollArea};
-use gstreamer::caps::HasFeatures;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
 use image::imageops::FilterType;
@@ -15,7 +13,6 @@ use std::hash::{Hash, Hasher};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
-use url::Url;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -73,7 +70,7 @@ pub struct TemplateApp {
     title_header_width: f32,
     total_header_width: f32,
 
-    //popup demo
+    //popup
     align4: egui::RectAlign,
     gap: f32,
     #[serde(skip)]
@@ -428,12 +425,12 @@ impl SongCardData {
     }
 }
 
-fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
+/*fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
     Url::parse(uri)
         .map_err(|e| e.to_string())?
         .to_file_path()
         .map_err(|_| "Invalid URI".into())
-}
+}*/
 
 fn path_to_string(path: std::path::PathBuf) -> String {
     let stringpath = path.as_path().to_string_lossy().to_string();
@@ -534,7 +531,7 @@ fn get_metadata(
         });
 
     let mut hasher = DefaultHasher::new();
-    if (album != "Unknown Album" && artist != "Unknown Artist") {
+    if album != "Unknown Album" && artist != "Unknown Artist" {
         format!("{}{}", album, artist).hash(&mut hasher); // this is like this so that we don't cache multiple of the same cover
     } else {
         uri.hash(&mut hasher);
@@ -553,7 +550,7 @@ fn get_metadata(
             match image::load_from_memory(&data) {
                 Ok(img) => {
                     let resized = img.resize(96, 96, FilterType::Lanczos3);
-                    if let Err(e) = resized.save(output_path) {
+                    if let Err(_) = resized.save(output_path) {
                         return Ok(Metadata {
                             title: "⚠ Album cover save error".to_owned(),
                             artist: " ".to_owned(),
@@ -670,7 +667,7 @@ impl eframe::App for TemplateApp {
                         ui.label(title);
                     });
 
-                    ui.add_space(ui.available_width() / 2.0 - 200.0);
+                    ui.add_space(ui.available_width() / 2.0 - 192.0); // there is probably a better way to center things, since this requires some arbitrary numbers.
 
                     ui.group(|ui| {
                         // main controls
@@ -807,6 +804,13 @@ impl eframe::App for TemplateApp {
 
         //--(*￣3￣)╭----(*￣3￣)╭---(*￣3￣)╭----(*￣3￣)╭--//
         // Side panel to display playlists and app controls //
+        fn draw_drop_bar(ui: &mut egui::Ui, start: egui::Pos2, end: egui::Pos2) {
+            let stroke = egui::Stroke::new(2.0, ui.visuals().widgets.active.bg_fill);
+            ui.painter().line_segment([start, end], stroke);
+            // Add little circles at the ends for a "polished" look
+            ui.painter().circle_filled(start, 3.0, stroke.color);
+            ui.painter().circle_filled(end, 3.0, stroke.color);
+        }
 
         egui::SidePanel::left("playlists")
             .resizable(true)
@@ -817,30 +821,81 @@ impl eframe::App for TemplateApp {
                 ui.label(format!("FPS: {:.1}", fps));
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.set_min_width(ui.available_width()); // this makes smooth resizing possible. feels kinda jank but whatever.
-                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        if ui.selectable_label(false, "  📁 Local Files").clicked() {
-                            let local_path = std::path::PathBuf::from("playlists/playlist-1"); // todo: make user configurable
-                            self.songs = Songs::new_from_folder(&local_path);
-                            self.currently_selected_playlist = Some("Local Files".to_string());
-                            self.currently_selected_playlist_path = Some(local_path);
+                    let list_id = ui.make_persistent_id("reorder_list_bars");
+                    let dragging_index = ui.data(|d| d.get_temp::<usize>(list_id));
+                    let mut drop_target_index = None;
+
+                    if ui.selectable_label(false, "📁 Local Files").clicked() {
+                        let local_path = std::path::PathBuf::from("playlists/playlist-1"); // todo: make user configurable
+                        self.songs = Songs::new_from_folder(&local_path);
+                        self.currently_selected_playlist = Some("Local Files".to_string());
+                        self.currently_selected_playlist_path = Some(local_path);
+                    }
+                    for i in 0..self.playlists.len() {
+                        let playlist_name = self.playlists[i]
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "Unknown".to_string()); // unwrap_or_else might be unnecessary here, since a playlist should *never* not have a name; if it didn't, it wouldn't exist.
+                        let response = ui
+                            .selectable_label(false, format!("📃  {}", playlist_name))
+                            .interact(egui::Sense::drag());
+                        if response.drag_started() {
+                            ui.data_mut(|d| d.insert_temp(list_id, i));
                         }
-                        for playlist in &self.playlists {
-                            let playlist_name = playlist
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "Unknown".to_string());
-                            if ui
-                                .selectable_label(false, format!("📃 {}", playlist_name))
-                                .clicked()
-                            // THE EMOJIS MAKE IT LOOK AI BUT I SWEAR TO GOD I WROTE THIS（￣︶￣）↗ lookes good in egui!
-                            {
-                                self.songs = Songs::new(playlist);
-                                self.currently_selected_playlist = Some(playlist_name);
-                                self.currently_selected_playlist_path =
-                                    Some(playlist.to_path_buf());
+
+                        if response.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                            egui::Tooltip::always_open(
+                                ui.ctx().clone(), // is clone right here? feels wrong dunno why
+                                ui.layer_id(),
+                                egui::Id::new("playlist_drag_tooltip"),
+                                egui::Pos2::ZERO,
+                            )
+                            .at_pointer()
+                            .show(|ui| {
+                                ui.label(&playlist_name);
+                            });
+                        }
+
+                        if response.clicked() {
+                            self.songs = Songs::new(&self.playlists[i]);
+                            self.currently_selected_playlist = Some(playlist_name);
+                            self.currently_selected_playlist_path =
+                                Some(self.playlists[i].to_path_buf());
+                        }
+
+                        let rect = response.rect;
+                        if let (Some(pos), Some(_)) =
+                            (ui.input(|i| i.pointer.interact_pos()), dragging_index)
+                        {
+                            if rect.contains(pos) {
+                                drop_target_index =
+                                    Some(if pos.y < rect.center().y { i } else { i + 1 });
                             }
                         }
-                    })
+
+                        if let Some(target) = drop_target_index {
+                            // drop indicator
+                            if target == i {
+                                draw_drop_bar(ui, rect.left_top(), rect.right_top());
+                            } else if target == self.playlists.len()
+                                && i == self.playlists.len() - 1
+                            {
+                                draw_drop_bar(ui, rect.left_bottom(), rect.right_bottom());
+                            }
+                        }
+                    }
+
+                    if ui.input(|i| i.pointer.any_released()) {
+                        if let (Some(from), Some(to)) = (dragging_index, drop_target_index) {
+                            if from != to && to <= self.playlists.len() {
+                                let item = self.playlists.remove(from);
+                                let insert_at = if to > from { to - 1 } else { to };
+                                self.playlists.insert(insert_at, item);
+                            }
+                        }
+                        ui.data_mut(|d| d.remove::<usize>(list_id));
+                    }
                 });
             });
 
