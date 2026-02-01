@@ -1,12 +1,16 @@
 {
+    "comment": "Title, artist, album name, and song length should be stored here too. Will look smoother.",
     "song_locations": [
-        "playlists/playlist-1/YASHEXTRA - genderfluid lesbians.mp3",
         "playlists/playlist-1/willyrodriguezwastaken - wetdream (WIP 85-) - 01 -untitled-.mp3",
-        "playlists/playlist-1/color bars.mp3",
         "playlists/playlist-1/Stop Thinking.mp3",
         "playlists/playlist-1/Fear of God.mp3",
         "playlists/playlist-1/Childs Play.mp3",
-        "playlists/playlist-1/willyrodriguezwastaken - wetdream (WIP 85-) - 11 playing dead.mp3"
-    ],
-    "comment": "Title, artist, album name, and song length should be stored here too. Will look smoother."
+        "playlists/playlist-1/willyrodriguezwastaken - wetdream (WIP 85-) - 11 playing dead.mp3",
+        "playlists/playlist-1/Childs Play.mp3",
+        "playlists/playlist-1/YASHEXTRA - genderfluid lesbians.mp3",
+        "playlists/playlist-1/YASHEXTRA - genderfluid lesbians.mp3",
+        "playlists/playlist-1/color bars.mp3",
+        "playlists/playlist-1/willyrodriguezwastaken - wetdream (WIP 85-) - 11 playing dead.mp3",
+        "playlists/playlist-1/Fear of God.mp3"
+    ]
 }
