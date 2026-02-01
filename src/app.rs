@@ -657,126 +657,152 @@ impl eframe::App for TemplateApp {
             .resizable(true)
             .min_height(50.0)
             .show(ctx, |ui| {
-                ScrollArea::horizontal().show(ui, |ui| {
-                    ui.set_min_height(ui.available_height());
-                    let title = self
-                        .now_playing_song
-                        .as_ref()
-                        .map(|s| s.title.clone())
-                        .unwrap_or_else(|| "no song".to_owned());
-                    ui.label(title);
-                    ui.horizontal_centered(|ui| {
-                        /////
-                        // Seeking
-                        let (success, state, _pending) =
-                            self.playbin.state(gstreamer::ClockTime::from_mseconds(0));
-                        if success.is_ok()
-                            && (state == gstreamer::State::Playing
-                                || state == gstreamer::State::Paused)
-                        {
-                            let duration = self.duration_ms.max(1) as f32;
-                            let mut pos = self.position_ms as f32;
+                ui.set_min_height(ui.available_height());
+                ui.horizontal(|ui| {
+                    ui.group(|ui| {
+                        // song info
+                        ui.set_width(150.0);
+                        let title = self
+                            .now_playing_song
+                            .as_ref()
+                            .map(|s| s.title.clone())
+                            .unwrap_or_else(|| "no song".to_owned());
+                        ui.label(title);
+                    });
 
-                            let response = ui.add(
-                                egui::Slider::new(&mut pos, 0.0..=duration)
-                                    .text("Position")
-                                    .trailing_fill(true)
-                                    .custom_formatter(|n, _| {
-                                        let total_seconds = (n / 1000.0) as i64;
-                                        let minutes = total_seconds / 60;
-                                        let seconds = total_seconds % 60;
-                                        format!("{:02}:{:02}", minutes, seconds)
-                                    }),
-                            );
-                            if response.changed() {
-                                let seek_to = gstreamer::ClockTime::from_mseconds(pos as u64);
+                    ui.add_space(ui.available_width() / 2.0 - 200.0);
 
-                                self.playbin
-                                    .seek_simple(
-                                        gstreamer::SeekFlags::FLUSH
-                                            | gstreamer::SeekFlags::KEY_UNIT,
-                                        seek_to,
-                                    ) // Wow! Gstream just has that!
-                                    .expect("Seek failed");
-                            }
-                        } else {
-                            ui.add_enabled(
-                                false,
-                                egui::Slider::new(&mut 0.0, 0.0..=1.0).text("Position"),
-                            );
-                        }
-                        if self.last_update.elapsed().as_millis() > 100 {
-                            // Set position
-                            if let Some(pos) = self.playbin.query_position::<gstreamer::ClockTime>()
-                            {
-                                self.position_ms = pos.mseconds();
-                            }
-                            self.last_update = std::time::Instant::now();
-                        }
-
-                        if self.error_show {
-                            // this should be a separate function
-                            Modal::new(Id::new("IO Error")).show(ui.ctx(), |ui| {
-                                ui.set_width(200.0);
-                                ui.heading("Error");
-                                ui.label(&self.error_value);
-
-                                ui.add_space(32.0);
-
-                                egui::Sides::new().show(
-                                    ui,
-                                    |_ui| {},
-                                    |ui| {
-                                        if ui.button("aw dang").clicked() {
-                                            self.error_show = false;
-                                        }
-
-                                        if ui.button("im sorry").clicked() {
-                                            self.error_show = false;
-                                        }
-                                    },
-                                );
-                            });
-                        }
-
+                    ui.group(|ui| {
+                        // main controls
                         /////
                         // Play/pause button
-                        if ui.button("Play/Pause").clicked() {
-                            let (_success, current, _pending) =
-                                self.playbin.state(gstreamer::ClockTime::NONE); // todo: i think i'm checking this a few times per loop. should make this check once and set a variable
-                            if current == gstreamer::State::Playing {
-                                if let Err(err) = self.playbin.set_state(gstreamer::State::Paused) {
-                                    show_error(self, err.to_string());
-                                }
-                            } else if current == gstreamer::State::Paused {
-                                if let Err(err) = self.playbin.set_state(gstreamer::State::Playing)
-                                {
-                                    show_error(self, err.to_string());
-                                }
-                            } else {
-                                let song_path =
-                                    self.now_playing_song.as_ref().map(|s| s.path.clone());
-                                if let Some(path) = song_path {
-                                    play_song(self, path);
+                        ui.set_width(200.0);
+                        ui.vertical_centered(|ui| {
+                            if ui.button("Play/Pause").clicked() {
+                                let (_success, current, _pending) =
+                                    self.playbin.state(gstreamer::ClockTime::NONE); // todo: i think i'm checking this a few times per loop. should make this check once and set a variable
+                                if current == gstreamer::State::Playing {
+                                    if let Err(err) =
+                                        self.playbin.set_state(gstreamer::State::Paused)
+                                    {
+                                        show_error(self, err.to_string());
+                                    }
+                                } else if current == gstreamer::State::Paused {
+                                    if let Err(err) =
+                                        self.playbin.set_state(gstreamer::State::Playing)
+                                    {
+                                        show_error(self, err.to_string());
+                                    }
                                 } else {
-                                    show_error(self, "No song ready to play".to_owned()); // This should be removed in the future. Expected behaviour would be to disable the play/pause button.
+                                    let song_path =
+                                        self.now_playing_song.as_ref().map(|s| s.path.clone());
+                                    if let Some(path) = song_path {
+                                        play_song(self, path);
+                                    } else {
+                                        show_error(self, "No song ready to play".to_owned()); // This should be removed in the future. Expected behaviour would be to disable the play/pause button.
+                                    }
                                 }
                             }
-                        }
 
-                        /////
-                        // Volume slider
-                        let response_volume = ui.add(
-                            egui::Slider::new(&mut self.volume, 0.0..=1.0)
-                                .text("Volume")
-                                .trailing_fill(true), // 1.0 here is the max volume
-                        );
-                        if response_volume.changed() {
-                            let cubic_volume = (self.volume * self.volume * self.volume) as f64; // cubic slider & gstreamer needs f64
-                            self.playbin.set_property("volume", cubic_volume);
-                        }
+                            /////
+                            // Seeking
+                            let (success, state, _pending) =
+                                self.playbin.state(gstreamer::ClockTime::from_mseconds(0));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if success.is_ok()
+                                        && (state == gstreamer::State::Playing
+                                            || state == gstreamer::State::Paused)
+                                    {
+                                        let duration = self.duration_ms.max(1) as f32;
+                                        let mut pos = self.position_ms as f32;
+                                        let response = ui.add(
+                                            egui::Slider::new(&mut pos, 0.0..=duration)
+                                                .trailing_fill(true)
+                                                .custom_formatter(|n, _| {
+                                                    let total_seconds = (n / 1000.0) as i64;
+                                                    let minutes = total_seconds / 60;
+                                                    let seconds = total_seconds % 60;
+                                                    format!("{:02}:{:02}", minutes, seconds)
+                                                }),
+                                        );
+                                        if response.changed() {
+                                            let seek_to =
+                                                gstreamer::ClockTime::from_mseconds(pos as u64);
+
+                                            self.playbin
+                                                .seek_simple(
+                                                    gstreamer::SeekFlags::FLUSH
+                                                        | gstreamer::SeekFlags::KEY_UNIT,
+                                                    seek_to,
+                                                ) // Wow! Gstream just has that!
+                                                .expect("Seek failed");
+                                        }
+                                    } else {
+                                        ui.add_enabled(
+                                            false,
+                                            egui::Slider::new(&mut 0.0, 0.0..=1.0),
+                                        );
+                                    }
+                                    if self.last_update.elapsed().as_millis() > 100 {
+                                        // Set position
+                                        if let Some(pos) =
+                                            self.playbin.query_position::<gstreamer::ClockTime>()
+                                        {
+                                            self.position_ms = pos.mseconds();
+                                        }
+                                        self.last_update = std::time::Instant::now();
+                                    }
+                                },
+                            );
+                        });
+                    });
+
+                    /////
+                    // Volume slider
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.group(|ui| {
+                            // secondary controls
+                            ui.set_width(150.0);
+
+                            let response_volume = ui.add(
+                                egui::Slider::new(&mut self.volume, 0.0..=1.0)
+                                    .text("🔊") // egui speaker emoji looks kind of bad so replace this with something else eventually
+                                    .trailing_fill(true) // 1.0 here is the max volume
+                                    .show_value(false),
+                            );
+                            if response_volume.changed() {
+                                let cubic_volume = (self.volume * self.volume * self.volume) as f64; // cubic slider & gstreamer needs f64
+                                self.playbin.set_property("volume", cubic_volume);
+                            }
+                        });
                     });
                 });
+
+                if self.error_show {
+                    Modal::new(Id::new("IO Error")).show(ui.ctx(), |ui| {
+                        ui.set_width(200.0);
+                        ui.heading("Error");
+                        ui.label(&self.error_value);
+
+                        ui.add_space(32.0);
+
+                        egui::Sides::new().show(
+                            ui,
+                            |_ui| {},
+                            |ui| {
+                                if ui.button("aw dang").clicked() {
+                                    self.error_show = false;
+                                }
+
+                                if ui.button("im sorry").clicked() {
+                                    self.error_show = false;
+                                }
+                            },
+                        );
+                    });
+                }
             });
 
         //--(*￣3￣)╭----(*￣3￣)╭---(*￣3￣)╭----(*￣3￣)╭--//
