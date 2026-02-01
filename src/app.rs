@@ -370,8 +370,46 @@ impl Songs {
             articles: Vec::from_iter(iter),
         }
     }
-}
+    pub fn new_from_folder(folder_path: &Path) -> Songs {
+        let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a"];
 
+        let iter = fs::read_dir(folder_path)
+            .into_iter() // Handle potential errors reading the folder
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| audio_extensions.contains(&ext.to_lowercase().as_str()))
+                        .unwrap_or(false)
+            })
+            .map(|path| {
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Unknown Track".to_string());
+
+                SongCardData {
+                    title: file_name,
+                    artist: "Unknown Artist".to_owned(), // todo: metadata
+                    album: "Unknown Album".to_owned(),
+                    length: "--:--".to_owned(), // todo: parse
+                    cover_path: "".to_owned(),  //todo: metadata
+                    path: path.clone(),         // at most adds 20kb of memory use
+                    texture: None,
+                    playing: false,
+                    metadata_loaded: false,
+                    display: true,
+                }
+            });
+        Songs {
+            articles: Vec::from_iter(iter),
+        }
+    }
+}
 impl SongCardData {
     //i must be for real this section is written by ai. im Sorry. but im fuck at rust,, this should be checked later, though.
     fn load_texture_if_needed(&mut self, ctx: &egui::Context) {
@@ -754,14 +792,21 @@ impl eframe::App for TemplateApp {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.set_min_width(ui.available_width()); // this makes smooth resizing possible. feels kinda jank but whatever.
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        if ui.selectable_label(false, "  📁 Local Files").clicked() {
+                            let local_path = std::path::PathBuf::from("playlists/playlist-1"); // todo: make user configurable
+                            self.songs = Songs::new_from_folder(&local_path);
+                            self.currently_selected_playlist = Some("Local Files".to_string());
+                            self.currently_selected_playlist_path = Some(local_path);
+                        }
                         for playlist in &self.playlists {
                             let playlist_name = playlist
                                 .file_name()
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_else(|| "Unknown".to_string());
                             if ui
-                                .selectable_label(false, format!("📁 {}", playlist_name))
+                                .selectable_label(false, format!("📃 {}", playlist_name))
                                 .clicked()
+                            // THE EMOJIS MAKE IT LOOK AI BUT I SWEAR TO GOD I WROTE THIS（￣︶￣）↗ lookes good in egui!
                             {
                                 self.songs = Songs::new(playlist);
                                 self.currently_selected_playlist = Some(playlist_name);
