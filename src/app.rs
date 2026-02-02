@@ -442,7 +442,7 @@ fn to_base62(mut n: usize, width: usize) -> String {
             n /= 62;
         }
     }
-    
+
     while result.len() < width {
         result.push(charset[0]);
     }
@@ -479,6 +479,26 @@ fn path_to_uri(path: std::path::PathBuf) -> String {
 fn show_error(app: &mut TemplateApp, error: String) {
     app.error_value = error;
     app.error_show = true;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct DefaultPlaylistData {
+    song_locations: Vec<String>,
+}
+
+fn create_playlist(
+    file_path: &str,
+    locations: Option<Vec<String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = DefaultPlaylistData {
+        song_locations: locations.unwrap_or_default(),
+    };
+
+    let file = File::create(file_path)?;
+    let writer = std::io::BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, &data)?;
+
+    Ok(())
 }
 
 fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
@@ -916,11 +936,11 @@ impl eframe::App for TemplateApp {
                     }
 
                     if ui.selectable_label(false, "+").clicked() {
-                        show_error(
-                            self,
-                            "todo: add playlist button & right click menu for playlists"
-                                .to_string(),
-                        );
+                        // button logic should start a separate thread maybe? cus disk operations
+                        // it feels fine though, so im not sure. 
+                        let count = to_base62(self.playlists.len() + 1, 4);
+                        let _ = create_playlist(&format!("./playlists/{}new playlist.json", count), None); // todo: error handling
+                        self.playlists = get_playlists("./playlists/").unwrap_or_default();
                     }
 
                     if ui.input(|i| i.pointer.any_released()) {
@@ -936,7 +956,7 @@ impl eframe::App for TemplateApp {
                                     let file_name = path_to_string_name(&playlist);
                                     let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
                                     // ^^ this is done in case a json file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
-                                    let count62 = to_base62(count, 4);
+                                    let count62 = to_base62(count, 4); // 14 million playlists gotta be enough.
                                     playlist.set_file_name(format!("{:04}{}", count62, clean_name));
                                     let to_string = path_to_string(&playlist);
                                     self.playlists[count] = playlist; // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations

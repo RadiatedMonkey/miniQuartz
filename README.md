@@ -4,6 +4,7 @@ It is currently non-functional
 The reason this exists is:
 - I fucking hate Spotify, but it holds a grip on my soul unlike any other app. The only solution is to invest so much time into making an alternative that I *have* to use it.
 - I want to learn Rust
+- Spotify and other streaming platforms are genuinely evil. While MiniQuartz may not pay artists, I hope that the money saved can be directly sent to your favourites instead of funding wars.
 
 Goals, in order of priority:
 - [ ] - Fast and lightweight cross-platform file playback. Windows and Android are the main focus, but Linux would be nice to have too. Basic features; queue, playlists, search, no audio stutter at high load
