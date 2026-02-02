@@ -263,11 +263,8 @@ impl TemplateApp {
 
         ui.menu_button("Add to playlist", |ui| {
             for playlist in &self.playlists {
-                let playlist_name = playlist
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown".to_string());
-                let playlist_path = path_to_string(playlist.to_path_buf());
+                let playlist_name = path_to_string_name(playlist);
+                let playlist_path = path_to_string(&playlist.to_path_buf());
                 if ui.button(&playlist_name).clicked() {
                     let _ = add_to_playlist(&playlist_path, song_string);
                     if Some(playlist_name.clone()) == self.currently_selected_playlist {
@@ -279,7 +276,8 @@ impl TemplateApp {
         });
         if ui.button("Remove from playlist").clicked() {
             let playlist_path = path_to_string(
-                self.currently_selected_playlist_path
+                &self
+                    .currently_selected_playlist_path
                     .as_ref()
                     .unwrap()
                     .to_path_buf(),
@@ -387,7 +385,7 @@ impl Songs {
                 let file_name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown Track".to_string());
+                    .unwrap_or_else(|| "Unknown Track".to_string()); // unwrap or else probably not needed here, every file has a name right?
 
                 SongCardData {
                     title: file_name,
@@ -432,9 +430,17 @@ impl SongCardData {
         .map_err(|_| "Invalid URI".into())
 }*/
 
-fn path_to_string(path: std::path::PathBuf) -> String {
+fn path_to_string(path: &PathBuf) -> String {
     let stringpath = path.as_path().to_string_lossy().to_string();
     stringpath
+}
+
+fn path_to_string_name(path: &PathBuf) -> String {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+    file_name
 }
 
 fn path_to_uri(path: std::path::PathBuf) -> String {
@@ -659,12 +665,13 @@ impl eframe::App for TemplateApp {
                     ui.group(|ui| {
                         // song info
                         ui.set_width(150.0);
-                        let title = self
-                            .now_playing_song
-                            .as_ref()
-                            .map(|s| s.title.clone())
-                            .unwrap_or_else(|| "no song".to_owned());
-                        ui.label(title);
+                        ui.horizontal(|ui| {
+                            ui.label("meow");
+                            ui.vertical(|ui| {
+                                ui.label(self.now_playing_song.as_ref().unwrap().title.clone());
+                                ui.label(self.now_playing_song.as_ref().unwrap().artist.clone());
+                            });
+                        });
                     });
 
                     ui.add_space(ui.available_width() / 2.0 - 192.0); // there is probably a better way to center things, since this requires some arbitrary numbers.
@@ -836,8 +843,9 @@ impl eframe::App for TemplateApp {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Unknown".to_string()); // unwrap_or_else might be unnecessary here, since a playlist should *never* not have a name; if it didn't, it wouldn't exist.
+                        let cleaned_playlist_name = &playlist_name[4..];
                         let response = ui
-                            .selectable_label(false, format!("📃  {}", playlist_name))
+                            .selectable_label(false, format!("📃  {}", cleaned_playlist_name))
                             .interact(egui::Sense::drag());
                         if response.drag_started() {
                             ui.data_mut(|d| d.insert_temp(list_id, i));
@@ -886,12 +894,49 @@ impl eframe::App for TemplateApp {
                         }
                     }
 
+                    if ui.selectable_label(false, "+").clicked() {
+                        show_error(
+                            self,
+                            "todo: add playlist button & right click menu for playlists"
+                                .to_string(),
+                        );
+                    }
+
                     if ui.input(|i| i.pointer.any_released()) {
                         if let (Some(from), Some(to)) = (dragging_index, drop_target_index) {
                             if from != to && to <= self.playlists.len() {
                                 let item = self.playlists.remove(from);
                                 let insert_at = if to > from { to - 1 } else { to };
                                 self.playlists.insert(insert_at, item);
+
+                                let mut count = 0;
+                                for mut playlist in self.playlists.clone() {
+                                    let path_string = path_to_string(&playlist);
+                                    let file_name = path_to_string_name(&playlist);
+                                    let clean_name =
+                                        if file_name.chars().take(4).all(|c| c.is_ascii_digit()) {
+                                            &file_name[4..]
+                                        } else {
+                                            &file_name
+                                        };
+                                    playlist.set_file_name(format!("{:04}{}", count, clean_name));
+                                    let to_string = path_to_string(&playlist);
+                                    self.playlists[count] = playlist; // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
+
+                                    if let Err(error) = fs::rename(path_string.clone(), &to_string)
+                                    {
+                                        show_error(
+                                            self,
+                                            format!(
+                                                "err: {} | from: {} | to: {}",
+                                                error.to_string(),
+                                                path_string,
+                                                to_string
+                                            ),
+                                        ); // this error cant be closed. dunno why!
+                                    }
+                                    count += 1;
+                                }
                             }
                         }
                         ui.data_mut(|d| d.remove::<usize>(list_id));
@@ -1106,7 +1151,7 @@ impl eframe::App for TemplateApp {
                                         egui::Color32::from_white_alpha(10),
                                     );
                                 }
-                                let path_string = path_to_string(song.path.clone());
+                                let path_string = path_to_string(&song.path);
                                 let song_send = song.clone();
                                 self.apply_options(
                                     egui::Popup::context_menu(&response)
