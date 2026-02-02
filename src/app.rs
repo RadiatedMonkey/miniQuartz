@@ -430,6 +430,27 @@ impl SongCardData {
         .map_err(|_| "Invalid URI".into())
 }*/
 
+fn to_base62(mut n: usize, width: usize) -> String {
+    let charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let mut result = Vec::new();
+
+    if n == 0 {
+        result.push(charset[0]);
+    } else {
+        while n > 0 {
+            result.push(charset[n % 62]);
+            n /= 62;
+        }
+    }
+    
+    while result.len() < width {
+        result.push(charset[0]);
+    }
+
+    result.reverse();
+    String::from_utf8(result).unwrap_or_else(|_| "0000".to_string())
+}
+
 fn path_to_string(path: &PathBuf) -> String {
     let stringpath = path.as_path().to_string_lossy().to_string();
     stringpath
@@ -843,9 +864,9 @@ impl eframe::App for TemplateApp {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Unknown".to_string()); // unwrap_or_else might be unnecessary here, since a playlist should *never* not have a name; if it didn't, it wouldn't exist.
-                        let cleaned_playlist_name = &playlist_name[4..];
+                        let playlist_name = &playlist_name[4..];
                         let response = ui
-                            .selectable_label(false, format!("📃  {}", cleaned_playlist_name))
+                            .selectable_label(false, format!("📃  {}", &playlist_name))
                             .interact(egui::Sense::drag());
                         if response.drag_started() {
                             ui.data_mut(|d| d.insert_temp(list_id, i));
@@ -861,13 +882,13 @@ impl eframe::App for TemplateApp {
                             )
                             .at_pointer()
                             .show(|ui| {
-                                ui.label(&playlist_name);
+                                ui.label(playlist_name);
                             });
                         }
 
                         if response.clicked() {
                             self.songs = Songs::new(&self.playlists[i]);
-                            self.currently_selected_playlist = Some(playlist_name);
+                            self.currently_selected_playlist = Some(playlist_name.to_string());
                             self.currently_selected_playlist_path =
                                 Some(self.playlists[i].to_path_buf());
                         }
@@ -913,13 +934,10 @@ impl eframe::App for TemplateApp {
                                 for mut playlist in self.playlists.clone() {
                                     let path_string = path_to_string(&playlist);
                                     let file_name = path_to_string_name(&playlist);
-                                    let clean_name =
-                                        if file_name.chars().take(4).all(|c| c.is_ascii_digit()) {
-                                            &file_name[4..]
-                                        } else {
-                                            &file_name
-                                        };
-                                    playlist.set_file_name(format!("{:04}{}", count, clean_name));
+                                    let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
+                                    // ^^ this is done in case a json file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
+                                    let count62 = to_base62(count, 4);
+                                    playlist.set_file_name(format!("{:04}{}", count62, clean_name));
                                     let to_string = path_to_string(&playlist);
                                     self.playlists[count] = playlist; // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
 
