@@ -10,7 +10,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::BufReader;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -92,60 +92,248 @@ fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
 
 fn get_playlists(path: &str) -> std::io::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(path)?;
-    let json_files = entries
+    let playlist_files = entries
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
             let path = entry.path();
-            path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("m3u")
         })
         .map(|entry| entry.path())
         .collect();
-    Ok(json_files)
+    Ok(playlist_files)
 }
 
-fn add_to_playlist(file_path: &str, new_song: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let file = File::open(file_path)?;
-    let reader = BufReader::new(file);
-    let mut data: serde_json::Value = serde_json::from_reader(reader)?;
+fn add_to_playlist(
+    file_path: &str,
+    new_song: &SongCardData,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut playlist = M3uPlaylist::new();
 
-    if let Some(locations) = data
-        .get_mut("song_locations")
-        .and_then(|v| v.as_array_mut())
-    {
-        locations.push(serde_json::json!(new_song));
-    } // else {error; couldn't find song_locations in playlist file}
-
-    let mut file = File::create(file_path)?;
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
-    let mut ser = serde_json::Serializer::with_formatter(&mut file, formatter);
-    data.serialize(&mut ser)?;
-
+    playlist.add_track(
+        &format!("../{}", path_to_string(&new_song.path)), // adding ../ so that the playlist files can be played in other players directly
+        -1,
+        &new_song.title,
+        &new_song.artist,
+        &format!("{}", new_song.cover_path),
+        &new_song.album,
+    );
+    let _ = write_m3u(file_path, &playlist, false, true, false);
     Ok(())
 }
 
 fn remove_from_playlist(
     file_path: &str,
-    target_song: &str,
+    index_to_remove: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let file = File::open(file_path)?;
-    let reader = BufReader::new(file);
-    let mut data: serde_json::Value = serde_json::from_reader(reader)?;
+    let mut playlist = read_m3u(file_path)?;
 
-    if let Some(locations) = data
-        .get_mut("song_locations")
-        .and_then(|v| v.as_array_mut())
-    {
-        if let Some(index) = locations.iter().position(|x| x == target_song) {
-            locations.remove(index);
-        } // else error could not find song
-    } // else error could not find song_locations arrayxz
+    if index_to_remove < playlist.entries.len() {
+        playlist.entries.remove(index_to_remove);
+    } else {
+        return Err("Index out of bounds".into());
+    }
 
-    let mut file = File::create(file_path)?;
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
-    let mut ser = serde_json::Serializer::with_formatter(&mut file, formatter);
-    data.serialize(&mut ser)?;
+    write_m3u(file_path, &playlist, true, false, true)?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaylistEntry {
+    pub path: String,
+    pub duration: i32, // -1 if unknown
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub cover_path: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct M3uPlaylist {
+    pub entries: Vec<PlaylistEntry>,
+}
+
+impl IntoIterator for M3uPlaylist {
+    type Item = PlaylistEntry;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+impl M3uPlaylist {
+    pub fn new() -> Self {
+        M3uPlaylist {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn add_track(
+        &mut self,
+        path: &str,
+        duration: i32,
+        title: &str,
+        artist: &str,
+        cover_path: &str,
+        album: &str,
+    ) {
+        self.entries.push(PlaylistEntry {
+            path: path.to_string(),
+            duration,
+            title: title.to_string(),
+            artist: artist.to_string(),
+            cover_path: cover_path.to_string(),
+            album: album.to_string(),
+        });
+    }
+}
+
+pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    let mut playlist = M3uPlaylist::new();
+    // Temporary storage for metadata read from the previous line
+    let mut current_duration = -1;
+    let mut current_title = String::new();
+    let mut current_artist = String::new();
+    let mut current_cover_path = String::new();
+    let mut current_album = String::new();
+
+    for line_result in reader.lines() {
+        let line = line_result?;
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.starts_with("#EXTINF:") {
+            let content = &trimmed[8..];
+            let parts: Vec<&str> = content.split('?').collect();
+            current_duration = parts[0].parse().unwrap_or(-1);
+            current_title = parts[1].trim().to_string();
+            current_artist = parts[2].trim().to_string();
+            current_cover_path = parts[3].trim().to_string();
+            current_album = parts[4].trim().to_string();
+        } else if trimmed.starts_with('#') {
+            continue;
+        } else {
+            playlist.entries.push(PlaylistEntry {
+                path: trimmed.to_string(),
+                duration: current_duration,
+                title: current_title.clone(),
+                artist: current_artist.clone(),
+                cover_path: current_cover_path.clone(),
+                album: current_album.clone(),
+            });
+
+            // Reset metadata for next entry : is this necessary?
+            current_duration = -1;
+            current_title.clear();
+            current_artist.clear();
+            current_cover_path.clear();
+            current_album.clear();
+        }
+    }
+
+    Ok(playlist)
+}
+
+fn edit_m3u_track(
+    file_path: &str,
+    index: usize,
+    album: String,
+    artist: String,
+    cover_path: String,
+    title: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut playlist = read_m3u(file_path)?;
+
+    if index < playlist.entries.len() {
+        playlist.entries[index].album = album;
+        playlist.entries[index].artist = artist;
+        playlist.entries[index].cover_path = cover_path;
+        playlist.entries[index].title = title;
+        // not setting path bc this already gets the path from the playlist file. they will always be equal.
+        // not setting length bc i dont think songs change in length often enough to warrant it
+    } else {
+        return Err("Index out of bounds".into());
+    }
+
+    write_m3u(file_path, &playlist, true, false, true)?;
+
+    Ok(())
+}
+
+fn write_m3u<P: AsRef<Path>>(
+    path: P,
+    playlist: &M3uPlaylist,
+    write_header: bool,
+    append: bool,
+    overwrite: bool,
+) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(append)
+        .create(true) // if it doesn't exist it'll make it, this is useful for the New Playlist option in the right click menu on song cards
+        .open(&path)?;
+
+    if overwrite {
+        file = std::fs::File::create(path)?;
+    }
+
+    if write_header {
+        writeln!(file, "#EXTM3U")?;
+    }
+
+    for entry in &playlist.entries {
+        // Only write metadata if requested AND if useful data exists
+        if !entry.title.is_empty() || entry.duration != -1 {
+            let dur = if entry.duration == -1 {
+                0
+            } else {
+                entry.duration
+            };
+            let title = if entry.title.is_empty() {
+                "Unknown Title"
+            } else {
+                &entry.title
+            };
+            let artist = if entry.artist.is_empty() {
+                "Unknown Artist(1)"
+            } else {
+                &entry.artist
+            };
+            let cover_path = if entry.cover_path.is_empty() {
+                "./assets/icon-256.png"
+            } else {
+                &entry.cover_path
+            };
+            let album = if entry.album.is_empty() {
+                "Unknown Album"
+            } else {
+                &entry.album
+            };
+
+            // Format: #EXTINF:seconds,Title
+            writeln!(
+                file,
+                "#EXTINF:{}?{}?{}?{}?{}",
+                dur, title, artist, cover_path, album
+            )?;
+        }
+        // Write the actual file path
+        writeln!(file, "{}", entry.path)?;
+    }
+
+    Ok(())
+}
+
+pub fn create_empty_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
+    let playlist = M3uPlaylist::new();
+    write_m3u(path, &playlist, true, true, true) // todo: check if name exists already
 }
 
 impl Default for TemplateApp {
@@ -158,7 +346,7 @@ impl Default for TemplateApp {
         std::thread::spawn(move || {
             let discoverer =
                 gstreamer_pbutils::Discoverer::new(gstreamer::ClockTime::from_seconds(5))
-                    .expect("Failed to create discoverer");
+                    .expect("Failed to create discoverer"); // todo: proper error
 
             while let Ok(request) = req_rx.recv() {
                 if let Ok(metadata) = get_metadata(&discoverer, request.path.clone()) {
@@ -258,7 +446,7 @@ impl TemplateApp {
             .close_behavior(self.close_behavior)
     }
 
-    fn nested_menus(&mut self, ui: &mut egui::Ui, song_string: &str, song_data: SongCardData) {
+    fn nested_menus(&mut self, ui: &mut egui::Ui, song_data: SongCardData, index: usize) {
         ui.set_max_width(200.0); // To make sure we wrap long text
 
         ui.menu_button("Add to playlist", |ui| {
@@ -266,7 +454,7 @@ impl TemplateApp {
                 let playlist_name = path_to_string_name(playlist);
                 let playlist_path = path_to_string(&playlist.to_path_buf());
                 if ui.button(&playlist_name).clicked() {
-                    let _ = add_to_playlist(&playlist_path, song_string);
+                    let _ = add_to_playlist(&playlist_path, &song_data);
                     if Some(playlist_name.clone()) == self.currently_selected_playlist {
                         self.songs.articles.extend([song_data.clone()]);
                     }
@@ -282,7 +470,7 @@ impl TemplateApp {
                     .unwrap()
                     .to_path_buf(),
             );
-            let _ = remove_from_playlist(&playlist_path, song_string);
+            let _ = remove_from_playlist(&playlist_path, index);
             if let Some(index) = self.songs.articles.iter().position(|x| x == &song_data) {
                 self.songs.articles[index].display = false;
             }
@@ -316,44 +504,30 @@ struct SongCardData {
     display: bool,
 }
 
-#[derive(Deserialize)]
-struct SongManifest {
-    song_locations: Vec<PathBuf>,
-}
-
 impl Songs {
-    pub fn new(json_path: &PathBuf) -> Songs {
-        let file = match File::open(json_path) {
-            Ok(f) => f,
-            Err(_) => {
-                //eprintln!("Warning: Could not open playlist file.");
-                return Songs { articles: vec![] };
-            }
+    pub fn new(m3u_path: &PathBuf) -> Songs {
+        let playlist_entries = match read_m3u(m3u_path) {
+            Ok(entries) => entries,
+            Err(_) => return Songs { articles: vec![] },
         };
 
-        let reader = BufReader::new(file);
-
-        let manifest: SongManifest = match serde_json::from_reader(reader) {
-            Ok(m) => m,
-            Err(_) => {
-                //eprintln!("Warning: Playlist JSON is malformed.");
-                return Songs { articles: vec![] };
-            }
-        };
-
-        let iter = manifest.song_locations.into_iter().map(|path| {
-            let file_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Unknown Track".to_string());
-
+        let iter = playlist_entries.into_iter().map(|entry| {
+            let display_title = if entry.title.is_empty() {
+                Path::new(&entry.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Unknown Track".to_string())
+            } else {
+                entry.title
+            };
+            let path = &entry.path[1..];
             SongCardData {
-                title: file_name,
-                artist: "Unknown Artist(1)".to_owned(),
-                album: "Unknown Album(1)".to_owned(),
+                title: display_title,
+                artist: entry.artist,
+                album: entry.album,
                 length: "--:--".to_owned(),
-                cover_path: "".to_owned(),
-                path,
+                cover_path: entry.cover_path,
+                path: PathBuf::from(path),
                 texture: None,
                 playing: false,
                 metadata_loaded: false,
@@ -385,15 +559,15 @@ impl Songs {
                 let file_name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown Track".to_string()); // unwrap or else probably not needed here, every file has a name right?
+                    .unwrap_or_else(|| "Unknown Track".to_string()); // unwrap_or_else probably not needed here, every file has a name right?
 
                 SongCardData {
                     title: file_name,
-                    artist: "Unknown Artist".to_owned(), // todo: metadata
+                    artist: "Unknown Artist(2)".to_owned(),
                     album: "Unknown Album".to_owned(),
-                    length: "--:--".to_owned(), // todo: parse
-                    cover_path: "".to_owned(),  //todo: metadata
-                    path: path.clone(),         // at most adds 20kb of memory use
+                    length: "--:--".to_owned(),
+                    cover_path: "".to_owned(),
+                    path: path.clone(),
                     texture: None,
                     playing: false,
                     metadata_loaded: false,
@@ -486,21 +660,6 @@ struct DefaultPlaylistData {
     song_locations: Vec<String>,
 }
 
-fn create_playlist(
-    file_path: &str,
-    locations: Option<Vec<String>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let data = DefaultPlaylistData {
-        song_locations: locations.unwrap_or_default(),
-    };
-
-    let file = File::create(file_path)?;
-    let writer = std::io::BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, &data)?;
-
-    Ok(())
-}
-
 fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
     let _ = app.playbin.set_state(gstreamer::State::Null);
 
@@ -584,7 +743,7 @@ fn get_metadata(
         uri.hash(&mut hasher);
     }
     let unique_id = hasher.finish();
-    let output_path_str = format!("cache/cover_{}.jpg", unique_id); // todo: figure out how to get a unique id for each song, this is not the right way to do this. should be based off file name and location + metadata
+    let output_path_str = format!("cache/cover_{}.jpg", unique_id);
     let output_path = PathBuf::from(output_path_str.clone());
 
     if let Some(parent) = output_path.parent() {
@@ -642,7 +801,7 @@ fn load_metadata_if_needed(
         let _ = sender.send(MetadataRequest {
             path: song.path.clone(),
         });
-        song.metadata_loaded = true;
+        song.metadata_loaded = true; // i think this isn't actually waiting to get metadata
     }
 }
 
@@ -936,10 +1095,8 @@ impl eframe::App for TemplateApp {
                     }
 
                     if ui.selectable_label(false, "+").clicked() {
-                        // button logic should start a separate thread maybe? cus disk operations
-                        // it feels fine though, so im not sure. 
                         let count = to_base62(self.playlists.len() + 1, 4);
-                        let _ = create_playlist(&format!("./playlists/{}new playlist.json", count), None); // todo: error handling
+                        let _ = create_empty_m3u(&format!("./playlists/{}new playlist.m3u", count)); // todo: error handling
                         self.playlists = get_playlists("./playlists/").unwrap_or_default();
                     }
 
@@ -955,7 +1112,7 @@ impl eframe::App for TemplateApp {
                                     let path_string = path_to_string(&playlist);
                                     let file_name = path_to_string_name(&playlist);
                                     let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
-                                    // ^^ this is done in case a json file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
+                                    // ^^ this is done in case a playlist file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
                                     let count62 = to_base62(count, 4); // 14 million playlists gotta be enough.
                                     playlist.set_file_name(format!("{:04}{}", count62, clean_name));
                                     let to_string = path_to_string(&playlist);
@@ -971,7 +1128,7 @@ impl eframe::App for TemplateApp {
                                                 path_string,
                                                 to_string
                                             ),
-                                        ); // this error cant be closed. dunno why!
+                                        );
                                     }
                                     count += 1;
                                 }
@@ -1056,12 +1213,14 @@ impl eframe::App for TemplateApp {
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
                         let mut clicked_song_index = None;
 
-                        for result in self.metadata_receiver.try_iter().take(20) {
-                            for song in self
+                        for result in self.metadata_receiver.try_iter().take(5) {
+                            // If loading is slow, increase this.
+                            for (index, song) in self
                                 .songs
                                 .articles
                                 .iter_mut()
-                                .filter(|s| s.path == result.path)
+                                .enumerate()
+                                .filter(|(_, s)| s.path == result.path)
                             {
                                 song.album = result.data.album.clone();
                                 song.artist = result.data.artist.clone();
@@ -1069,6 +1228,21 @@ impl eframe::App for TemplateApp {
                                     song.title = result.data.title.clone();
                                 }
                                 song.cover_path = result.data.cover_path.clone();
+                                let playlist_path = path_to_string(
+                                    &self
+                                        .currently_selected_playlist_path
+                                        .as_ref()
+                                        .unwrap()
+                                        .to_path_buf(),
+                                );
+                                let _ = edit_m3u_track( // todo: actual error handling
+                                    &playlist_path,
+                                    index,
+                                    song.album.clone(),
+                                    song.artist.clone(),
+                                    song.cover_path.clone(),
+                                    song.title.clone(),
+                                );
                             }
                         }
                         for i in start..end {
@@ -1111,7 +1285,7 @@ impl eframe::App for TemplateApp {
                                                             } else {
                                                                 ui.add(
                                                                     egui::Spinner::new()
-                                                                        .size(30.0)
+                                                                        .size(30.0) // for some reason the spinner is slightly larger than the image, despite being 30.0? it might have some sort of padding
                                                                         .color(egui::Color32::BLUE),
                                                                 );
                                                             }
@@ -1195,7 +1369,7 @@ impl eframe::App for TemplateApp {
                                     egui::Popup::context_menu(&response)
                                         .id(Id::new(format!("context_menu{}", i))),
                                 )
-                                .show(|ui| self.nested_menus(ui, &path_string, song_send));
+                                .show(|ui| self.nested_menus(ui, song_send, i));
                             }
                         }
 

@@ -1,9 +1,0 @@
-{
-    "comment": "Title, artist, album name, and song length should be stored here too. Will look smoother.",
-    "song_locations": [
-        "playlists/playlist-1/Stop Thinking.mp3",
-        "playlists/playlist-1/Childs Play.mp3",
-        "playlists/playlist-1\\abjectdog - see u soon.mp3",
-        "playlists/playlist-1/willyrodriguezwastaken - wetdream (WIP 85-) - 01 -untitled-.mp3"
-    ]
-}
