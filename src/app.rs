@@ -117,6 +117,7 @@ fn add_to_playlist(
         &format!("{}", new_song.cover_path),
         &new_song.album,
     );
+
     let _ = write_m3u(file_path, &playlist, false, true, false);
     Ok(())
 }
@@ -455,6 +456,7 @@ impl TemplateApp {
                 let playlist_path = path_to_string(&playlist.to_path_buf());
                 if ui.button(&playlist_name).clicked() {
                     let _ = add_to_playlist(&playlist_path, &song_data);
+                    self.songs.articles.push(song_data.clone()); // wish this could be in the add_to_playlist function but couldn't get it to play nice. skill issue
                     if Some(playlist_name.clone()) == self.currently_selected_playlist {
                         self.songs.articles.extend([song_data.clone()]);
                     }
@@ -1235,7 +1237,8 @@ impl eframe::App for TemplateApp {
                                         .unwrap()
                                         .to_path_buf(),
                                 );
-                                let _ = edit_m3u_track( // todo: actual error handling
+                                let _ = edit_m3u_track(
+                                    // todo: actual error handling
                                     &playlist_path,
                                     index,
                                     song.album.clone(),
