@@ -452,12 +452,14 @@ impl TemplateApp {
 
         ui.menu_button("Add to playlist", |ui| {
             for playlist in &self.playlists {
-                let playlist_name = path_to_string_name(playlist);
+                let playlist_name = &path_to_string_name(playlist)[4..];
                 let playlist_path = path_to_string(&playlist.to_path_buf());
-                if ui.button(&playlist_name).clicked() {
+                if ui.button(playlist_name).clicked() {
                     let _ = add_to_playlist(&playlist_path, &song_data);
-                    self.songs.articles.push(song_data.clone()); // wish this could be in the add_to_playlist function but couldn't get it to play nice. skill issue
-                    if Some(playlist_name.clone()) == self.currently_selected_playlist {
+                    if (Some(playlist_path) == self.currently_selected_playlist) {
+                        self.songs.articles.push(song_data.clone()); // wish this could be in the add_to_playlist function but couldn't get it to play nice. skill issue
+                    }
+                    if Some(playlist_name) == self.currently_selected_playlist.as_deref() {
                         self.songs.articles.extend([song_data.clone()]);
                     }
                 }
@@ -1098,7 +1100,9 @@ impl eframe::App for TemplateApp {
 
                     if ui.selectable_label(false, "+").clicked() {
                         let count = to_base62(self.playlists.len() + 1, 4);
-                        if let Err(error) = create_empty_m3u(&format!("./playlists/{}new playlist.m3u", count)){
+                        if let Err(error) =
+                            create_empty_m3u(&format!("./playlists/{}new playlist.m3u", count))
+                        {
                             show_error(self, error.to_string());
                         }
                         self.playlists = get_playlists("./playlists/").unwrap_or_default();
@@ -1122,8 +1126,7 @@ impl eframe::App for TemplateApp {
                                     self.playlists[count] = playlist.clone(); // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
                                     let _ = &playlist.set_extension("m3utmp");
 
-                                    if let Err(error) = fs::rename(&old_path, &playlist)
-                                    {
+                                    if let Err(error) = fs::rename(&old_path, &playlist) {
                                         show_error(
                                             self,
                                             format!(
@@ -1140,8 +1143,7 @@ impl eframe::App for TemplateApp {
                                     let mut old_path = playlist.clone();
                                     old_path.set_extension("m3utmp");
                                     let _ = &playlist.set_extension("m3u");
-                                    if let Err(error) = fs::rename(&old_path, &playlist)
-                                    {
+                                    if let Err(error) = fs::rename(&old_path, &playlist) {
                                         show_error(
                                             self,
                                             format!(
