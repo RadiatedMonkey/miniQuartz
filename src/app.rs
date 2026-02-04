@@ -334,7 +334,7 @@ fn write_m3u<P: AsRef<Path>>(
 
 pub fn create_empty_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
     let playlist = M3uPlaylist::new();
-    write_m3u(path, &playlist, true, true, true) // todo: check if name exists already
+    write_m3u(path, &playlist, true, true, true)
 }
 
 impl Default for TemplateApp {
@@ -1098,7 +1098,9 @@ impl eframe::App for TemplateApp {
 
                     if ui.selectable_label(false, "+").clicked() {
                         let count = to_base62(self.playlists.len() + 1, 4);
-                        let _ = create_empty_m3u(&format!("./playlists/{}new playlist.m3u", count)); // todo: error handling
+                        if let Err(error) = create_empty_m3u(&format!("./playlists/{}new playlist.m3u", count)){
+                            show_error(self, error.to_string());
+                        }
                         self.playlists = get_playlists("./playlists/").unwrap_or_default();
                     }
 
@@ -1111,28 +1113,45 @@ impl eframe::App for TemplateApp {
 
                                 let mut count = 0;
                                 for mut playlist in self.playlists.clone() {
-                                    let path_string = path_to_string(&playlist);
+                                    let old_path = playlist.clone();
                                     let file_name = path_to_string_name(&playlist);
                                     let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
                                     // ^^ this is done in case a playlist file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
                                     let count62 = to_base62(count, 4); // 14 million playlists gotta be enough.
                                     playlist.set_file_name(format!("{:04}{}", count62, clean_name));
-                                    let to_string = path_to_string(&playlist);
-                                    self.playlists[count] = playlist; // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
+                                    self.playlists[count] = playlist.clone(); // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
+                                    let _ = &playlist.set_extension("m3utmp");
 
-                                    if let Err(error) = fs::rename(path_string.clone(), &to_string)
+                                    if let Err(error) = fs::rename(&old_path, &playlist)
                                     {
                                         show_error(
                                             self,
                                             format!(
                                                 "err: {} | from: {} | to: {}",
                                                 error.to_string(),
-                                                path_string,
-                                                to_string
+                                                path_to_string(&old_path),
+                                                path_to_string(&playlist),
                                             ),
                                         );
                                     }
                                     count += 1;
+                                }
+                                for mut playlist in self.playlists.clone() {
+                                    let mut old_path = playlist.clone();
+                                    old_path.set_extension("m3utmp");
+                                    let _ = &playlist.set_extension("m3u");
+                                    if let Err(error) = fs::rename(&old_path, &playlist)
+                                    {
+                                        show_error(
+                                            self,
+                                            format!(
+                                                "err: {} | from: {} | to: {}",
+                                                error.to_string(),
+                                                path_to_string(&old_path),
+                                                path_to_string(&playlist),
+                                            ),
+                                        );
+                                    }
                                 }
                             }
                         }
