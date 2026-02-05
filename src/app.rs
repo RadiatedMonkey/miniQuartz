@@ -8,333 +8,80 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
+
+use crate::utilities::*;
+use crate::playback::*;
+use crate::playlist::*;
+use crate::UI::*;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
+    // probably not everything needs to be pub, but is there a reason not to?
     #[serde(skip)]
-    songs: Songs,
-
-    #[serde(skip)]
-    row_height: Option<f32>,
+    pub songs: Songs,
 
     #[serde(skip)]
-    col1_width: Option<f32>,
-
-    col2_width: Option<f32>,
+    pub row_height: Option<f32>,
 
     #[serde(skip)]
-    playbin: gstreamer::Element,
+    pub col1_width: Option<f32>,
+
+    pub col2_width: Option<f32>,
 
     #[serde(skip)]
-    position_ms: u64,
+    pub playbin: gstreamer::Element,
 
     #[serde(skip)]
-    duration_ms: u64,
+    pub position_ms: u64,
 
     #[serde(skip)]
-    last_update: std::time::Instant,
+    pub duration_ms: u64,
 
     #[serde(skip)]
-    error_show: bool,
+    pub last_update: std::time::Instant,
 
     #[serde(skip)]
-    error_value: String,
-
-    volume: f32,
+    pub error_show: bool,
 
     #[serde(skip)]
-    folders: Vec<std::path::PathBuf>,
+    pub error_value: String,
+
+    pub volume: f32,
 
     #[serde(skip)]
-    playlists: Vec<std::path::PathBuf>,
+    pub folders: Vec<std::path::PathBuf>,
 
-    currently_selected_playlist: Option<String>,
-    currently_selected_playlist_path: Option<PathBuf>,
+    #[serde(skip)]
+    pub playlists: Vec<std::path::PathBuf>,
 
-    now_playing: Option<PathBuf>,
+    pub currently_selected_playlist: Option<String>,
+    pub currently_selected_playlist_path: Option<PathBuf>,
 
-    now_playing_song: Option<SongCardData>,
+    pub now_playing: Option<PathBuf>,
+
+    pub now_playing_song: Option<SongCardData>,
 
     #[serde(skip)]
     metadata_receiver: Receiver<MetadataResult>,
     #[serde(skip)]
     metadata_sender: Sender<MetadataRequest>,
 
-    title_header_width: f32,
-    total_header_width: f32,
+    pub title_header_width: f32,
+    pub total_header_width: f32,
 
     //popup
-    align4: egui::RectAlign,
-    gap: f32,
+    pub align4: egui::RectAlign,
+    pub gap: f32,
     #[serde(skip)]
-    close_behavior: egui::PopupCloseBehavior,
-    popup_open: bool,
-    checked: bool,
-    color: egui::Color32,
-}
-
-fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
-    let entries = fs::read_dir(path)?; // Read the directory contents
-    let folders = entries
-        .filter_map(|entry| entry.ok()) // Ignore entries with errors (e.g., permission issues)
-        .filter(|entry| entry.path().is_dir()) // Keep only directories
-        .map(|entry| entry.path()) // Convert DirEntry to PathBuf
-        .collect();
-    Ok(folders)
-}
-
-fn get_playlists(path: &str) -> std::io::Result<Vec<PathBuf>> {
-    let entries = fs::read_dir(path)?;
-    let playlist_files = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            let path = entry.path();
-            path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("m3u")
-        })
-        .map(|entry| entry.path())
-        .collect();
-    Ok(playlist_files)
-}
-
-fn add_to_playlist(
-    file_path: &str,
-    new_song: &SongCardData,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut playlist = M3uPlaylist::new();
-
-    playlist.add_track(
-        &format!("../{}", path_to_string(&new_song.path)), // adding ../ so that the playlist files can be played in other players directly
-        -1,
-        &new_song.title,
-        &new_song.artist,
-        &format!("{}", new_song.cover_path),
-        &new_song.album,
-    );
-
-    let _ = write_m3u(file_path, &playlist, false, true, false);
-    Ok(())
-}
-
-fn remove_from_playlist(
-    file_path: &str,
-    index_to_remove: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut playlist = read_m3u(file_path)?;
-
-    if index_to_remove < playlist.entries.len() {
-        playlist.entries.remove(index_to_remove);
-    } else {
-        return Err("Index out of bounds".into());
-    }
-
-    write_m3u(file_path, &playlist, true, false, true)?;
-
-    Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PlaylistEntry {
-    pub path: String,
-    pub duration: i32, // -1 if unknown
-    pub title: String,
-    pub artist: String,
-    pub album: String,
-    pub cover_path: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct M3uPlaylist {
-    pub entries: Vec<PlaylistEntry>,
-}
-
-impl IntoIterator for M3uPlaylist {
-    type Item = PlaylistEntry;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries.into_iter()
-    }
-}
-
-impl M3uPlaylist {
-    pub fn new() -> Self {
-        M3uPlaylist {
-            entries: Vec::new(),
-        }
-    }
-
-    pub fn add_track(
-        &mut self,
-        path: &str,
-        duration: i32,
-        title: &str,
-        artist: &str,
-        cover_path: &str,
-        album: &str,
-    ) {
-        self.entries.push(PlaylistEntry {
-            path: path.to_string(),
-            duration,
-            title: title.to_string(),
-            artist: artist.to_string(),
-            cover_path: cover_path.to_string(),
-            album: album.to_string(),
-        });
-    }
-}
-
-pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-
-    let mut playlist = M3uPlaylist::new();
-    // Temporary storage for metadata read from the previous line
-    let mut current_duration = -1;
-    let mut current_title = String::new();
-    let mut current_artist = String::new();
-    let mut current_cover_path = String::new();
-    let mut current_album = String::new();
-
-    for line_result in reader.lines() {
-        let line = line_result?;
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if trimmed.starts_with("#EXTINF:") {
-            let content = &trimmed[8..];
-            let parts: Vec<&str> = content.split('?').collect();
-            current_duration = parts[0].parse().unwrap_or(-1);
-            current_title = parts[1].trim().to_string();
-            current_artist = parts[2].trim().to_string();
-            current_cover_path = parts[3].trim().to_string();
-            current_album = parts[4].trim().to_string();
-        } else if trimmed.starts_with('#') {
-            continue;
-        } else {
-            playlist.entries.push(PlaylistEntry {
-                path: trimmed.to_string(),
-                duration: current_duration,
-                title: current_title.clone(),
-                artist: current_artist.clone(),
-                cover_path: current_cover_path.clone(),
-                album: current_album.clone(),
-            });
-
-            // Reset metadata for next entry : is this necessary?
-            current_duration = -1;
-            current_title.clear();
-            current_artist.clear();
-            current_cover_path.clear();
-            current_album.clear();
-        }
-    }
-
-    Ok(playlist)
-}
-
-fn edit_m3u_track(
-    file_path: &str,
-    index: usize,
-    album: String,
-    artist: String,
-    cover_path: String,
-    title: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut playlist = read_m3u(file_path)?;
-
-    if index < playlist.entries.len() {
-        playlist.entries[index].album = album;
-        playlist.entries[index].artist = artist;
-        playlist.entries[index].cover_path = cover_path;
-        playlist.entries[index].title = title;
-        // not setting path bc this already gets the path from the playlist file. they will always be equal.
-        // not setting length bc i dont think songs change in length often enough to warrant it
-    } else {
-        return Err("Index out of bounds".into());
-    }
-
-    write_m3u(file_path, &playlist, true, false, true)?;
-
-    Ok(())
-}
-
-fn write_m3u<P: AsRef<Path>>(
-    path: P,
-    playlist: &M3uPlaylist,
-    write_header: bool,
-    append: bool,
-    overwrite: bool,
-) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .append(append)
-        .create(true) // if it doesn't exist it'll make it, this is useful for the New Playlist option in the right click menu on song cards
-        .open(&path)?;
-
-    if overwrite {
-        file = std::fs::File::create(path)?;
-    }
-
-    if write_header {
-        writeln!(file, "#EXTM3U")?;
-    }
-
-    for entry in &playlist.entries {
-        // Only write metadata if requested AND if useful data exists
-        if !entry.title.is_empty() || entry.duration != -1 {
-            let dur = if entry.duration == -1 {
-                0
-            } else {
-                entry.duration
-            };
-            let title = if entry.title.is_empty() {
-                "Unknown Title"
-            } else {
-                &entry.title
-            };
-            let artist = if entry.artist.is_empty() {
-                "Unknown Artist(1)"
-            } else {
-                &entry.artist
-            };
-            let cover_path = if entry.cover_path.is_empty() {
-                "./assets/icon-256.png"
-            } else {
-                &entry.cover_path
-            };
-            let album = if entry.album.is_empty() {
-                "Unknown Album"
-            } else {
-                &entry.album
-            };
-
-            // Format: #EXTINF:seconds,Title
-            writeln!(
-                file,
-                "#EXTINF:{}?{}?{}?{}?{}",
-                dur, title, artist, cover_path, album
-            )?;
-        }
-        // Write the actual file path
-        writeln!(file, "{}", entry.path)?;
-    }
-
-    Ok(())
-}
-
-pub fn create_empty_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
-    let playlist = M3uPlaylist::new();
-    write_m3u(path, &playlist, true, true, true)
+    pub close_behavior: egui::PopupCloseBehavior,
+    pub popup_open: bool,
+    pub checked: bool,
+    pub color: egui::Color32,
 }
 
 impl Default for TemplateApp {
@@ -426,7 +173,7 @@ impl TemplateApp {
             Default::default()
         };
 
-        app.initialize_gstreamer();
+        initialize_gstreamer(&mut app);
 
         if let Some(path) = app.currently_selected_playlist_path.as_ref() {
             if path.exists() {
@@ -446,251 +193,11 @@ impl TemplateApp {
             .gap(self.gap)
             .close_behavior(self.close_behavior)
     }
-
-    fn nested_menus(&mut self, ui: &mut egui::Ui, song_data: SongCardData, index: usize) {
-        ui.set_max_width(200.0); // To make sure we wrap long text
-
-        ui.menu_button("Add to playlist", |ui| {
-            for playlist in &self.playlists {
-                let playlist_name = &path_to_string_name(playlist)[4..];
-                let playlist_path = path_to_string(&playlist.to_path_buf());
-                if ui.button(playlist_name).clicked() {
-                    let _ = add_to_playlist(&playlist_path, &song_data);
-                    if (Some(playlist_path) == self.currently_selected_playlist) {
-                        self.songs.articles.push(song_data.clone()); // wish this could be in the add_to_playlist function but couldn't get it to play nice. skill issue
-                    }
-                    if Some(playlist_name) == self.currently_selected_playlist.as_deref() {
-                        self.songs.articles.extend([song_data.clone()]);
-                    }
-                }
-            }
-            let _ = ui.button("todo - New Playlist & Playlist Folders");
-        });
-        if ui.button("Remove from playlist").clicked() {
-            let playlist_path = path_to_string(
-                &self
-                    .currently_selected_playlist_path
-                    .as_ref()
-                    .unwrap()
-                    .to_path_buf(),
-            );
-            let _ = remove_from_playlist(&playlist_path, index);
-            if let Some(index) = self.songs.articles.iter().position(|x| x == &song_data) {
-                self.songs.articles[index].display = false;
-            }
-        }
-    }
-
-    fn initialize_gstreamer(&mut self) {
-        gstreamer::init().expect("Failed to init GStreamer");
-        self.playbin = gstreamer::ElementFactory::make("playbin")
-            .build()
-            .expect("Could not create playbin");
-    }
-}
-
-struct Songs {
-    articles: Vec<SongCardData>,
-}
-
-#[derive(Clone, serde::Deserialize, serde::Serialize, PartialEq)] // This is so serde knows wat 2 do. Using serde here to store the last playing song
-struct SongCardData {
-    title: String,
-    artist: String,
-    album: String,
-    length: String,
-    cover_path: String,
-    path: std::path::PathBuf,
-    #[serde(skip)]
-    texture: Option<egui::TextureHandle>,
-    playing: bool,
-    metadata_loaded: bool,
-    display: bool,
-}
-
-impl Songs {
-    pub fn new(m3u_path: &PathBuf) -> Songs {
-        let playlist_entries = match read_m3u(m3u_path) {
-            Ok(entries) => entries,
-            Err(_) => return Songs { articles: vec![] },
-        };
-
-        let iter = playlist_entries.into_iter().map(|entry| {
-            let display_title = if entry.title.is_empty() {
-                Path::new(&entry.path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown Track".to_string())
-            } else {
-                entry.title
-            };
-            let path = &entry.path[1..];
-            SongCardData {
-                title: display_title,
-                artist: entry.artist,
-                album: entry.album,
-                length: "--:--".to_owned(),
-                cover_path: entry.cover_path,
-                path: PathBuf::from(path),
-                texture: None,
-                playing: false,
-                metadata_loaded: false,
-                display: true,
-            }
-        });
-
-        Songs {
-            articles: Vec::from_iter(iter),
-        }
-    }
-    pub fn new_from_folder(folder_path: &Path) -> Songs {
-        let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a"];
-
-        let iter = fs::read_dir(folder_path)
-            .into_iter() // Handle potential errors reading the folder
-            .flatten()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|ext| audio_extensions.contains(&ext.to_lowercase().as_str()))
-                        .unwrap_or(false)
-            })
-            .map(|path| {
-                let file_name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown Track".to_string()); // unwrap_or_else probably not needed here, every file has a name right?
-
-                SongCardData {
-                    title: file_name,
-                    artist: "Unknown Artist(2)".to_owned(),
-                    album: "Unknown Album".to_owned(),
-                    length: "--:--".to_owned(),
-                    cover_path: "".to_owned(),
-                    path: path.clone(),
-                    texture: None,
-                    playing: false,
-                    metadata_loaded: false,
-                    display: true,
-                }
-            });
-        Songs {
-            articles: Vec::from_iter(iter),
-        }
-    }
-}
-impl SongCardData {
-    //i must be for real this section is written by ai. im Sorry. but im fuck at rust,, this should be checked later, though.
-    fn load_texture_if_needed(&mut self, ctx: &egui::Context) {
-        if self.texture.is_none() {
-            if let Ok(image) = image::open(&self.cover_path) {
-                let image = image.to_rgba8();
-                let size = [image.width() as usize, image.height() as usize];
-                let texture = ctx.load_texture(
-                    self.cover_path.clone(),
-                    egui::ColorImage::from_rgba_unmultiplied(size, &image),
-                    Default::default(),
-                );
-                self.texture = Some(texture);
-            }
-        }
-    }
-}
-
-/*fn uri_to_path(uri: &str) -> Result<PathBuf, String> {
-    Url::parse(uri)
-        .map_err(|e| e.to_string())?
-        .to_file_path()
-        .map_err(|_| "Invalid URI".into())
-}*/
-
-fn to_base62(mut n: usize, width: usize) -> String {
-    let charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let mut result = Vec::new();
-
-    if n == 0 {
-        result.push(charset[0]);
-    } else {
-        while n > 0 {
-            result.push(charset[n % 62]);
-            n /= 62;
-        }
-    }
-
-    while result.len() < width {
-        result.push(charset[0]);
-    }
-
-    result.reverse();
-    String::from_utf8(result).unwrap_or_else(|_| "0000".to_string())
-}
-
-fn path_to_string(path: &PathBuf) -> String {
-    let stringpath = path.as_path().to_string_lossy().to_string();
-    stringpath
-}
-
-fn path_to_string_name(path: &PathBuf) -> String {
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "Unknown".to_string());
-    file_name
-}
-
-fn path_to_uri(path: std::path::PathBuf) -> String {
-    let abs_path = path.canonicalize().unwrap_or(path.clone());
-    let path_str = abs_path.to_string_lossy().to_string();
-
-    let cleaned_path = path_str // this will probably need to be changed for android. God how the hell do you builkd for Android. Rafgh.
-        .replace("\\\\?\\", "")
-        .replace("\\", "/");
-
-    let uri = format!("file:///{}", cleaned_path);
-    uri
-}
-
-fn show_error(app: &mut TemplateApp, error: String) {
-    app.error_value = error;
-    app.error_show = true;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct DefaultPlaylistData {
     song_locations: Vec<String>,
-}
-
-fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
-    let _ = app.playbin.set_state(gstreamer::State::Null);
-
-    let cubic_volume = (app.volume * app.volume * app.volume) as f64; // cubic slider & gstreamer needs f64
-    app.playbin.set_property("volume", cubic_volume); // set volume when you play a song for some reason i forgot. check probably. didnt make a comment b4, whoops
-
-    let uri = path_to_uri(path.clone());
-
-    app.playbin.set_property("uri", &uri);
-
-    if let Err(_) = app.playbin.set_state(gstreamer::State::Playing) {
-        show_error(
-            app,
-            "GStreamer: State change failed. Check if file exists or audio device is ready."
-                .to_owned(),
-        );
-        let _ = app.playbin.set_state(gstreamer::State::Null);
-    } else {
-        app.now_playing = Some(path);
-        app.duration_ms = 0;
-        while app.duration_ms == 0 {
-            // this while loop is here because querying immediately returns 0. i believe gstreamer checks the duration in a diff thread, but this function would otherwise end before it can get it.
-            if let Some(dur) = app.playbin.query_duration::<gstreamer::ClockTime>() {
-                app.duration_ms = dur.mseconds();
-            }
-        }
-    }
 }
 
 struct Metadata {
@@ -797,7 +304,7 @@ struct MetadataResult {
     data: Metadata,
 }
 
-fn load_metadata_if_needed(
+fn load_metadata_if_needed( // scared to move the multithreaded stuff to another file (～￣▽￣)～
     song: &mut SongCardData,
     sender: std::sync::mpsc::Sender<MetadataRequest>,
 ) {
@@ -826,7 +333,7 @@ impl eframe::App for TemplateApp {
             match msg.view() {
                 gstreamer::MessageView::Eos(..) => {
                     let _ = self.playbin.set_state(gstreamer::State::Ready);
-                    self.now_playing = None; // todo: set this to first song playlist
+                    self.now_playing = None; // todo: set this to first song playlist at end of queue
                 }
                 gstreamer::MessageView::Error(err) => {
                     show_error(self, format!("GStreamer Error: {}", err.error().to_owned()));
@@ -953,7 +460,7 @@ impl eframe::App for TemplateApp {
                                             egui::Slider::new(&mut 0.0, 0.0..=1.0),
                                         );
                                     }
-                                    if self.last_update.elapsed().as_millis() > 100 {
+                                    if self.last_update.elapsed().as_millis() > 300 {
                                         // Set position
                                         if let Some(pos) =
                                             self.playbin.query_position::<gstreamer::ClockTime>()
@@ -1227,7 +734,8 @@ impl eframe::App for TemplateApp {
                         let mut start = ((top - ui.min_rect().top()) / row_height).floor() as usize;
                         let mut end = ((bottom - ui.min_rect().top()) / row_height).ceil() as usize;
 
-                        let render_buffer_size = 8; // If fast scrolling causes metadata not to load, increase this.
+                        let render_buffer_size = 6;
+                        // If slow-med scrolling causes metadata not to load, increase this.
 
                         start = start.saturating_sub(render_buffer_size);
                         end = (end + render_buffer_size).min(total_rows);
@@ -1238,6 +746,7 @@ impl eframe::App for TemplateApp {
 
                         for result in self.metadata_receiver.try_iter().take(5) {
                             // If loading is slow, increase this.
+
                             for (index, song) in self
                                 .songs
                                 .articles
@@ -1309,13 +818,17 @@ impl eframe::App for TemplateApp {
                                                             } else {
                                                                 ui.add(
                                                                     egui::Spinner::new()
-                                                                        .size(30.0) // for some reason the spinner is slightly larger than the image, despite being 30.0? it might have some sort of padding
+                                                                        .size(30.0) 
                                                                         .color(egui::Color32::BLUE),
+                                                                        /* for some reason the spinner is slightly larger than the image, despite being 30.0?
+                                                                         it might have some sort of padding, but im not sure how to change that. */
                                                                 );
                                                             }
                                                             ui.vertical(|ui| {
                                                                 // song & artist names
-                                                                let color = if self.now_playing // todo: this check should be based on file *and* playlist!
+                                                                let color = if self.now_playing
+                                                                /* todo: this should be based off of the ID in the list, and the currently selected playlist.
+                                                                Will need to also add logic in the song reordering area to change the currently selected ID */
                                                                 == Some(song.path.clone())
                                                                 {
                                                                     Color32::from_rgb(255, 128, 0) // make this configurable later
@@ -1387,13 +900,12 @@ impl eframe::App for TemplateApp {
                                         egui::Color32::from_white_alpha(10),
                                     );
                                 }
-                                let path_string = path_to_string(&song.path);
                                 let song_send = song.clone();
                                 self.apply_options(
                                     egui::Popup::context_menu(&response)
                                         .id(Id::new(format!("context_menu{}", i))),
                                 )
-                                .show(|ui| self.nested_menus(ui, song_send, i));
+                                .show(|ui| nested_menus(self, ui, song_send, i));
                             }
                         }
 
@@ -1412,10 +924,16 @@ impl eframe::App for TemplateApp {
                     });
             });
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                egui::warn_if_debug_build(ui); // this was in the example thing and idk if its needed or if theres a benefit to removing it
-            });
+            /*ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                egui::warn_if_debug_build(ui); // this was in the egui example
+            });*/
         });
         ctx.request_repaint_after(std::time::Duration::from_millis(300)); // Updates UI every 300ms, so that the duration bar moves smoothly when tabbed out
+
+        egui::Window::new("Egui Settings").show(ctx, |ui| {
+            ScrollArea::vertical().show(ui, |ui| {
+                ctx.settings_ui(ui); 
+            });
+        });
     }
 }
