@@ -4,6 +4,6 @@ mod app;
 pub mod utilities;
 pub mod playback;
 pub mod playlist;
-pub mod UI;
+pub mod song_ui;
 
 pub use app::TemplateApp;

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::TemplateApp;
-    /// BASIC UTILITIES ///
-    /// Simple functions used everywhere, mostly just conversions
+/// BASIC UTILITIES ///
+/// Simple functions used everywhere, mostly just conversions
 pub fn show_error(app: &mut TemplateApp, error: String) {
     app.error_value = error;
     app.error_show = true;
@@ -59,4 +59,5 @@ pub fn path_to_uri(path: std::path::PathBuf) -> String {
         .map_err(|e| e.to_string())?
         .to_file_path()
         .map_err(|_| "Invalid URI".into())
-}*/ //commented out bc nothing uses it rn
+}*/
+ //commented out bc nothing uses it rn

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::utilities::path_to_string;
 
-        /// PLAYLIST ///
-        /// Song management & organization
+/// PLAYLIST ///
+/// Song management & organization
 pub struct Songs {
     pub articles: Vec<SongCardData>,
 }
@@ -42,7 +42,7 @@ impl Songs {
             } else {
                 entry.title
             };
-            let path = &entry.path[1..];
+            let path = &entry.path;
             SongCardData {
                 title: display_title,
                 artist: entry.artist,
@@ -139,7 +139,7 @@ pub fn add_to_playlist(
     let mut playlist = M3uPlaylist::new();
 
     playlist.add_track(
-        &format!("../{}", path_to_string(&new_song.path)), // adding ../ so that the playlist files can be played in other players directly
+        &format!("{}", path_to_string(&new_song.path)), // adding ../ so that the playlist files can be played in other players directly
         -1,
         &new_song.title,
         &new_song.artist,
@@ -168,7 +168,7 @@ pub fn remove_from_playlist(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PlaylistEntry {
     pub path: String,
     pub duration: i32, // -1 if unknown
@@ -178,9 +178,10 @@ pub struct PlaylistEntry {
     pub cover_path: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct M3uPlaylist {
     pub entries: Vec<PlaylistEntry>,
+    pub texture: Option<egui::TextureHandle>,
 }
 
 impl IntoIterator for M3uPlaylist {
@@ -196,6 +197,7 @@ impl M3uPlaylist {
     pub fn new() -> Self {
         M3uPlaylist {
             entries: Vec::new(),
+            texture: None,
         }
     }
 
@@ -241,7 +243,7 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
 
         if trimmed.starts_with("#EXTINF:") {
             let content = &trimmed[8..];
-            let parts: Vec<&str> = content.split('?').collect();
+            let parts: Vec<&str> = content.split('␟').collect(); // ␟ is the "Unit Separator" symbol, not the country code.
             current_duration = parts[0].parse().unwrap_or(-1);
             current_title = parts[1].trim().to_string();
             current_artist = parts[2].trim().to_string();
@@ -350,7 +352,7 @@ pub fn write_m3u<P: AsRef<Path>>(
             // Format: #EXTINF:seconds,Title
             writeln!(
                 file,
-                "#EXTINF:{}?{}?{}?{}?{}",
+                "#EXTINF:{}␟{}␟{}␟{}␟{}",
                 dur, title, artist, cover_path, album
             )?;
         }

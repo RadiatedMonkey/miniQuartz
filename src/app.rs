@@ -1,6 +1,6 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
-use egui::{Color32, Id, Modal, ScrollArea};
+use egui::{Id, Modal, ScrollArea};
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
 use image::imageops::FilterType;
@@ -12,10 +12,10 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
-use crate::utilities::*;
 use crate::playback::*;
 use crate::playlist::*;
-use crate::UI::*;
+use crate::song_ui::*;
+use crate::utilities::*;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -59,7 +59,7 @@ pub struct TemplateApp {
     #[serde(skip)]
     pub playlists: Vec<std::path::PathBuf>,
 
-    pub currently_selected_playlist: Option<String>,
+    pub currently_selected_playlist_name: Option<String>,
     pub currently_selected_playlist_path: Option<PathBuf>,
 
     pub now_playing: Option<PathBuf>,
@@ -67,9 +67,9 @@ pub struct TemplateApp {
     pub now_playing_song: Option<SongCardData>,
 
     #[serde(skip)]
-    metadata_receiver: Receiver<MetadataResult>,
+    pub metadata_receiver: Receiver<MetadataResult>,
     #[serde(skip)]
-    metadata_sender: Sender<MetadataRequest>,
+    pub metadata_sender: Sender<MetadataRequest>,
 
     pub title_header_width: f32,
     pub total_header_width: f32,
@@ -128,7 +128,7 @@ impl Default for TemplateApp {
             folders: get_folders("./playlists/").unwrap_or_default(),
             playlists: get_playlists("./playlists/").unwrap_or_default(),
 
-            currently_selected_playlist: None,
+            currently_selected_playlist_name: None,
             currently_selected_playlist_path: Some(std::path::PathBuf::from("")),
 
             now_playing: None,
@@ -180,14 +180,14 @@ impl TemplateApp {
                 // Check bc user may have deleted folder
                 app.songs = Songs::new(path);
             } else {
-                app.currently_selected_playlist = Some("Playlist not found".to_owned());
+                app.currently_selected_playlist_name = Some("Playlist not found".to_owned());
             }
         }
 
         app
     }
 
-    fn apply_options<'a>(&self, popup: egui::Popup<'a>) -> egui::Popup<'a> {
+    pub fn apply_options<'a>(&self, popup: egui::Popup<'a>) -> egui::Popup<'a> {
         popup
             .align(self.align4)
             .gap(self.gap)
@@ -196,18 +196,18 @@ impl TemplateApp {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct DefaultPlaylistData {
+pub struct DefaultPlaylistData {
     song_locations: Vec<String>,
 }
 
-struct Metadata {
+pub struct Metadata {
     title: String,
     artist: String,
     album: String,
     cover_path: String,
 }
-
-fn get_metadata(
+// scared to move the multithreaded stuff to another file (～￣▽￣)～ but metadata stuff Should go somewhere else.
+pub fn get_metadata(
     discoverer: &gstreamer_pbutils::Discoverer,
     path: std::path::PathBuf,
 ) -> Result<Metadata, anyhow::Error> {
@@ -295,16 +295,16 @@ fn get_metadata(
     })
 }
 
-struct MetadataRequest {
+pub struct MetadataRequest {
     path: std::path::PathBuf,
 }
 
-struct MetadataResult {
+pub struct MetadataResult {
     path: std::path::PathBuf,
     data: Metadata,
 }
 
-fn load_metadata_if_needed( // scared to move the multithreaded stuff to another file (～￣▽￣)～
+pub fn load_metadata_if_needed(
     song: &mut SongCardData,
     sender: std::sync::mpsc::Sender<MetadataRequest>,
 ) {
@@ -395,7 +395,7 @@ impl eframe::App for TemplateApp {
                         ui.vertical_centered(|ui| {
                             if ui.button("Play/Pause").clicked() {
                                 let (_success, current, _pending) =
-                                    self.playbin.state(gstreamer::ClockTime::NONE); // todo: i think i'm checking this a few times per loop. should make this check once and set a variable
+                                    self.playbin.state(gstreamer::ClockTime::NONE);
                                 if current == gstreamer::State::Playing {
                                     if let Err(err) =
                                         self.playbin.set_state(gstreamer::State::Paused)
@@ -421,6 +421,7 @@ impl eframe::App for TemplateApp {
 
                             /////
                             // Seeking
+                            // TODO: Make a seek_to() function in playback.rs
                             let (success, state, _pending) =
                                 self.playbin.state(gstreamer::ClockTime::from_mseconds(0));
                             ui.with_layout(
@@ -546,7 +547,7 @@ impl eframe::App for TemplateApp {
                     if ui.selectable_label(false, "📁 Local Files").clicked() {
                         let local_path = std::path::PathBuf::from("playlists/playlist-1"); // todo: make user configurable
                         self.songs = Songs::new_from_folder(&local_path);
-                        self.currently_selected_playlist = Some("Local Files".to_string());
+                        self.currently_selected_playlist_name = Some("Local Files".to_string());
                         self.currently_selected_playlist_path = Some(local_path);
                     }
                     for i in 0..self.playlists.len() {
@@ -578,7 +579,7 @@ impl eframe::App for TemplateApp {
 
                         if response.clicked() {
                             self.songs = Songs::new(&self.playlists[i]);
-                            self.currently_selected_playlist = Some(playlist_name.to_string());
+                            self.currently_selected_playlist_name = Some(playlist_name.to_string());
                             self.currently_selected_playlist_path =
                                 Some(self.playlists[i].to_path_buf());
                         }
@@ -672,7 +673,7 @@ impl eframe::App for TemplateApp {
         //--◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐---◑﹏◐-//
         //   Central panel to display: Playlist contents, album contents, artist pages  //
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ctx, |_ui| {
             // central panel has to be rendered after other panels
             egui::TopBottomPanel::top("Header")
                 .resizable(false)
@@ -680,9 +681,26 @@ impl eframe::App for TemplateApp {
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         let playlist_name = self
-                            .currently_selected_playlist
+                            .currently_selected_playlist_name
                             .as_deref()
                             .unwrap_or("No playlist selected");
+                        /*if self.currently_selected_playlist_name_texture.is_none() {
+                            if let Ok(image) = image::open(&self.cover_path) {
+                                let image = image.to_rgba8();
+                                let size = [image.width() as usize, image.height() as usize];
+                                let texture = ctx.load_texture(
+                                    self.cover_path.clone(),
+                                    egui::ColorImage::from_rgba_unmultiplied(size, &image),
+                                    Default::default(),
+                                );
+                                self.texture = Some(texture);
+                            }
+                        }
+                        if let Some(tex) = self.currently_selected_playlist_name {
+                            ui.add(
+                                egui::Image::new(tex).max_width(30.0).corner_radius(3), // todo: this should be user configurable. some people haaate corner radius on album art
+                            );
+                        }*/
                         ui.label(egui::RichText::new(playlist_name).size(32.0).strong());
                     });
                 });
@@ -742,7 +760,6 @@ impl eframe::App for TemplateApp {
 
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
-                        let mut clicked_song_index = None;
 
                         for result in self.metadata_receiver.try_iter().take(5) {
                             // If loading is slow, increase this.
@@ -778,139 +795,17 @@ impl eframe::App for TemplateApp {
                                 );
                             }
                         }
+
+                        let mut clicked_song_index: Option<usize> = None;
                         for i in start..end {
-                            let song = &mut self.songs.articles[i];
-                            if song.display {
-                                load_metadata_if_needed(song, self.metadata_sender.clone());
-                                song.load_texture_if_needed(ctx);
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                let response = ui
-                                    .scope_builder(
-                                        egui::UiBuilder::new()
-                                            .id_salt("song_card")
-                                            .sense(egui::Sense::click()),
-                                        |ui| {
-                                            let response = ui.response();
-                                            let visuals = ui.style().interact(&response);
-                                            let fill_color =
-                                                if response.hovered() || response.has_focus() {
-                                                    visuals.bg_fill.gamma_multiply(0.3)
-                                                } else {
-                                                    egui::Color32::TRANSPARENT
-                                                };
-                                            egui::Frame::new()
-                                                .fill(fill_color)
-                                                //.stroke(visuals.bg_stroke)
-                                                .inner_margin(ui.spacing().menu_margin)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.label((i + 1).to_string());
-                                                        ui.scope(|ui| {
-                                                            ui.set_width(
-                                                                self.title_header_width + 25.0,
-                                                            );
-                                                            if let Some(tex) = &song.texture {
-                                                                ui.add(
-                                                                    egui::Image::new(tex)
-                                                                        .max_width(30.0)
-                                                                        .corner_radius(3), // todo: this should be user configurable. some people haaate corner radius on album art
-                                                                );
-                                                            } else {
-                                                                ui.add(
-                                                                    egui::Spinner::new()
-                                                                        .size(30.0) 
-                                                                        .color(egui::Color32::BLUE),
-                                                                        /* for some reason the spinner is slightly larger than the image, despite being 30.0?
-                                                                         it might have some sort of padding, but im not sure how to change that. */
-                                                                );
-                                                            }
-                                                            ui.vertical(|ui| {
-                                                                // song & artist names
-                                                                let color = if self.now_playing
-                                                                /* todo: this should be based off of the ID in the list, and the currently selected playlist.
-                                                                Will need to also add logic in the song reordering area to change the currently selected ID */
-                                                                == Some(song.path.clone())
-                                                                {
-                                                                    Color32::from_rgb(255, 128, 0) // make this configurable later
-                                                                } else {
-                                                                    ui.visuals().strong_text_color()
-                                                                };
-                                                                ui.add(
-                                                                    egui::Label::new(
-                                                                        egui::RichText::new(
-                                                                            &song.title,
-                                                                        )
-                                                                        .color(color),
-                                                                    )
-                                                                    .truncate(),
-                                                                );
-                                                                ui.add(
-                                                                    egui::Label::new(&song.artist)
-                                                                        .truncate(),
-                                                                );
-                                                            });
-                                                        });
-                                                        let remaining_width =
-                                                            ui.available_width() - 60.0;
-                                                        ui.allocate_ui_with_layout(
-                                                            egui::vec2(
-                                                                remaining_width,
-                                                                ui.available_height(),
-                                                            ),
-                                                            egui::Layout::left_to_right(
-                                                                egui::Align::Center,
-                                                            ),
-                                                            |ui| {
-                                                                ui.add(
-                                                                    egui::Label::new(&song.album)
-                                                                        .truncate(),
-                                                                );
-                                                            },
-                                                        );
-                                                        ui.with_layout(
-                                                            egui::Layout::right_to_left(
-                                                                egui::Align::TOP,
-                                                            ),
-                                                            |ui| {
-                                                                ui.add_space(10.0);
-                                                                ui.label(format!(
-                                                                    "{}",
-                                                                    &song.length
-                                                                ));
-                                                            },
-                                                        );
-                                                    });
-                                                });
-                                        },
-                                    )
-                                    .response;
-                                if response.double_clicked() {
-                                    clicked_song_index = Some(i);
-                                }
-
-                                if self.row_height.is_none() {
-                                    self.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
-                                } // this really only needs to be done on startup
-
-                                if self.now_playing == Some(song.path.clone()) {
-                                    // todo: this check should be based on file *and* playlist!
-                                    ui.painter().rect_filled(
-                                        response.rect,
-                                        4.0,
-                                        egui::Color32::from_white_alpha(10),
-                                    );
-                                }
-                                let song_send = song.clone();
-                                self.apply_options(
-                                    egui::Popup::context_menu(&response)
-                                        .id(Id::new(format!("context_menu{}", i))),
-                                )
-                                .show(|ui| right_click_song_card(self, ui, song_send, i));
+                            //let song = &mut self.songs.articles[i];
+                            if display_song_card(self, ctx, ui, i) {
+                                clicked_song_index = Some(i);
                             }
                         }
 
                         if let Some(idx) = clicked_song_index {
-                            let song = &self.songs.articles[idx];
+                            let song: &SongCardData = &self.songs.articles[idx];
                             let path = song.path.clone();
 
                             self.now_playing = Some(path.clone());
@@ -925,14 +820,15 @@ impl eframe::App for TemplateApp {
             });
 
             /*ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                egui::warn_if_debug_build(ui); // this was in the egui example
+                egui::warn_if_debug_build(ui); // this was in the egui example.
             });*/
         });
         ctx.request_repaint_after(std::time::Duration::from_millis(300)); // Updates UI every 300ms, so that the duration bar moves smoothly when tabbed out
 
         egui::Window::new("Egui Settings").show(ctx, |ui| {
+            // todo: make this a settings page
             ScrollArea::vertical().show(ui, |ui| {
-                ctx.settings_ui(ui); 
+                ctx.settings_ui(ui);
             });
         });
     }
