@@ -6,8 +6,7 @@ use crate::TemplateApp;
         /// UI ///
         /// Drawing functions
 
-pub fn nested_menus(app: &mut TemplateApp, ui: &mut egui::Ui, song_data: SongCardData, index: usize) {
-        // This is the right-click menu for song cards. Should make a UI module, and convert more stuff to functions. ex, making a song card can be a function.
+pub fn right_click_song_card(app: &mut TemplateApp, ui: &mut egui::Ui, song_data: SongCardData, index: usize) {
         ui.set_max_width(200.0); // To make sure we wrap long text
 
         ui.menu_button("Add to playlist", |ui| {

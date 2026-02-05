@@ -905,7 +905,7 @@ impl eframe::App for TemplateApp {
                                     egui::Popup::context_menu(&response)
                                         .id(Id::new(format!("context_menu{}", i))),
                                 )
-                                .show(|ui| nested_menus(self, ui, song_send, i));
+                                .show(|ui| right_click_song_card(self, ui, song_send, i));
                             }
                         }
 
