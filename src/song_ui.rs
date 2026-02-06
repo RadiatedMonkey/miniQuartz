@@ -10,7 +10,8 @@ use crate::app::load_metadata_if_needed;
 
 pub fn draw_drop_bar(ui: &mut egui::Ui, start: egui::Pos2, end: egui::Pos2) {
     // This should be in a different UI file, since this UI file is meant to be juist for songs.
-            let stroke = egui::Stroke::new(2.0, ui.visuals().widgets.active.bg_fill);
+            let color = ui.visuals().selection.bg_fill;
+            let stroke = egui::Stroke::new(2.0, color);
             ui.painter().line_segment([start, end], stroke);
             ui.painter().circle_filled(start, 3.0, stroke.color);
             ui.painter().circle_filled(end, 3.0, stroke.color);
@@ -73,15 +74,33 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
     let response = ui
         .scope_builder(
             egui::UiBuilder::new()
-                .id_salt(&song.path)
-                .sense(egui::Sense::click_and_drag()),
+                .id_salt(i)
+                .sense(egui::Sense::click()),
             |ui| {
                 let response = ui.response();
 
             let is_upper_half = ui.input(|i| i.pointer.hover_pos()).map_or(true, |pos| pos.y < response.rect.center().y);
 
-            if response.drag_started() {
-                app.dragged_song_index = Some(i);
+            if ui.input(|i| i.pointer.primary_released()) {
+                app.drag_origin = None;
+                app.dragging_song = None;
+            }
+            if response.is_pointer_button_down_on(){
+                app.dragging_song = Some(i);
+                app.drag_origin = ui.input(|i| i.pointer.press_origin());
+            }
+            if app.dragging_song == Some(i) {
+                /* this needs the check to see if we are dragging the right song because without
+                it every card gets set to being dragged because dragging_song is global.
+                hovered() is broken here, because song cards are in a scroll area & that steals focus.
+                so, the song card to drag should be set upon response.is_pointer_button_down_on()
+                that way, only the clicked song cards index gets set to i.
+                so much for just a drag buffer! */
+                let delta = ui.input(|i| i.pointer.latest_pos()).unwrap_or(egui::Pos2::new(0.0,0.0)).distance(app.drag_origin.unwrap_or(egui::Pos2::new(0.0,0.0)));
+                app.test_thing = Some(delta);
+                if delta > 2.0 {
+                    app.dragged_song_index = Some(i);
+                }
             }
             
             if let Some(from_idx) = app.dragged_song_index {
@@ -215,20 +234,6 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
             .id(Id::new(format!("context_menu{}", i))),
     )
     .show(|ui| right_click_song_card(app, ui, song_send, i));
-
-    if response.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-        egui::Tooltip::always_open(
-            ui.ctx().clone(), // is clone right here? feels wrong dunno why
-            ui.layer_id(),
-            egui::Id::new("playlist_drag_tooltip"),
-            egui::Pos2::ZERO,
-        )
-        .at_pointer()
-        .show(|ui| {
-            ui.label(title);
-        });
-    }
 
     (clicked, move_to)
 }

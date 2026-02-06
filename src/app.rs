@@ -76,6 +76,9 @@ pub struct TemplateApp {
 
     pub dragged_song_index: Option<usize>,
     pub swap_request: Option<(usize, usize)>,
+    pub drag_origin: Option<egui::Pos2>,
+    pub test_thing: Option<f32>,
+    pub dragging_song: Option<usize>,
 
     //popup
     pub align4: egui::RectAlign,
@@ -157,6 +160,9 @@ impl Default for TemplateApp {
 
             dragged_song_index: None,
             swap_request: None,
+            drag_origin: None,
+            test_thing: None,
+            dragging_song: None,
 
             //popup demo
             align4: egui::RectAlign::default(),
@@ -535,7 +541,7 @@ impl eframe::App for TemplateApp {
 
         //--(*￣3￣)╭----(*￣3￣)╭---(*￣3￣)╭----(*￣3￣)╭--//
         // Side panel to display playlists and app controls //
-        
+
         egui::SidePanel::left("playlists")
             .resizable(true)
             .min_width(30.0)
@@ -620,6 +626,8 @@ impl eframe::App for TemplateApp {
                         }
                         self.playlists = get_playlists("./playlists/").unwrap_or_default();
                     }
+                    ui.label(format!("{}",self.drag_origin.unwrap_or(egui::Pos2::new(0.0,0.0))));
+                    ui.label(format!("{}",self.test_thing.unwrap_or(0.0)));
 
                     if ui.input(|i| i.pointer.any_released()) {
                         self.dragged_song_index = None;
@@ -746,6 +754,7 @@ impl eframe::App for TemplateApp {
                 // Nested panels don't usually behave well but it works so idk lol.
                 ScrollArea::vertical()
                     //.max_width(available_width-5.0)
+                    .scroll_source(egui::containers::scroll_area::ScrollSource{scroll_bar: true, drag: false, mouse_wheel: true})
                     .show(ui, |ui| {
                         // render buffer stuff
                         let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
@@ -801,7 +810,9 @@ impl eframe::App for TemplateApp {
                                 );
                             }
                         }
-
+                        // / //                 // / //
+                        // / displaying song cards / //
+                        // / //                 // / //
                         for i in start..end {
                             //let song = &mut self.songs.articles[i];
                             let (clicked, move_to) = draw_song_card(self, ctx, ui, i);
@@ -818,6 +829,25 @@ impl eframe::App for TemplateApp {
                                 if let Some(source_idx) = self.dragged_song_index {
                                     self.swap_request = Some((source_idx, target_idx));
                                 }
+                            }
+                        }
+                        if let Some(dragged_idx) = self.dragged_song_index {
+                            if let Some(song) = self.songs.articles.get(dragged_idx) {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                                egui::Tooltip::always_open(
+                                    ui.ctx().clone(),
+                                    ui.layer_id(),
+                                    egui::Id::new("playlist_drag_tooltip"),
+                                    egui::Pos2::ZERO,
+                                )
+                                .at_pointer()
+                                .show(|ui| {
+                                    ui.set_max_width(300.0);
+                                    ui.add(
+                                        egui::Label::new(song.title.clone())
+                                            .wrap_mode(egui::TextWrapMode::Wrap),
+                                    );
+                                });
                             }
                         }
                         if ui.input(|i| i.pointer.any_released()) {
