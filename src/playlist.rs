@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+use crate::TemplateApp;
 use crate::utilities::path_to_string;
 
 /// PLAYLIST ///
@@ -299,6 +300,24 @@ pub fn edit_m3u_track(
     Ok(())
 }
 
+pub fn move_m3u_track(app: &mut TemplateApp, file_path: &str, from: usize, to: usize) {
+    // todo: make this function return an error if it has an error
+    let mut playlist = read_m3u(file_path).unwrap(); // todo: check for valid result from read_m3u
+
+    /*if from >= playlist.entries.len() || to >= playlist.entries.len(){
+        return Err("Index out of bounds".into());
+    }*/
+
+    let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
+    let insert_at = if from < to { to - 1 } else { to };
+
+    playlist.entries.insert(insert_at, entry);
+    let song_card = app.songs.articles.remove(from);
+    app.songs.articles.insert(insert_at, song_card);
+
+    let _ = write_m3u(file_path, &playlist, true, false, true);
+}
+
 pub fn write_m3u<P: AsRef<Path>>(
     path: P,
     playlist: &M3uPlaylist,
@@ -371,7 +390,7 @@ pub fn create_empty_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
 pub fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(path)?; // Read the directory contents
     let folders = entries
-        .filter_map(|entry| entry.ok()) // Ignore entries with errors (e.g., permission issues)
+        .filter_map(|entry| entry.ok()) // Ignore entries with errors
         .filter(|entry| entry.path().is_dir()) // Keep only directories
         .map(|entry| entry.path()) // Convert DirEntry to PathBuf
         .collect();

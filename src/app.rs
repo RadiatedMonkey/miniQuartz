@@ -74,6 +74,9 @@ pub struct TemplateApp {
     pub title_header_width: f32,
     pub total_header_width: f32,
 
+    pub dragged_song_index: Option<usize>,
+    pub swap_request: Option<(usize, usize)>,
+
     //popup
     pub align4: egui::RectAlign,
     pub gap: f32,
@@ -151,6 +154,9 @@ impl Default for TemplateApp {
 
             title_header_width: 250.0,
             total_header_width: 0.0,
+
+            dragged_song_index: None,
+            swap_request: None,
 
             //popup demo
             align4: egui::RectAlign::default(),
@@ -377,7 +383,13 @@ impl eframe::App for TemplateApp {
                         // song info
                         ui.set_width(150.0);
                         ui.horizontal(|ui| {
-                            ui.label("meow");
+                            if let Some(tex) = &self.now_playing_song.as_ref().unwrap().texture {
+                                ui.add(
+                                    egui::Image::new(&*tex)
+                                        .max_height(ui.available_height())
+                                        .corner_radius(3), // todo: get this directly from metadata! this is using the small cover from cache
+                                );
+                            }
                             ui.vertical(|ui| {
                                 ui.label(self.now_playing_song.as_ref().unwrap().title.clone());
                                 ui.label(self.now_playing_song.as_ref().unwrap().artist.clone());
@@ -523,14 +535,7 @@ impl eframe::App for TemplateApp {
 
         //--(*￣3￣)╭----(*￣3￣)╭---(*￣3￣)╭----(*￣3￣)╭--//
         // Side panel to display playlists and app controls //
-        fn draw_drop_bar(ui: &mut egui::Ui, start: egui::Pos2, end: egui::Pos2) {
-            let stroke = egui::Stroke::new(2.0, ui.visuals().widgets.active.bg_fill);
-            ui.painter().line_segment([start, end], stroke);
-            // Add little circles at the ends for a "polished" look
-            ui.painter().circle_filled(start, 3.0, stroke.color);
-            ui.painter().circle_filled(end, 3.0, stroke.color);
-        }
-
+        
         egui::SidePanel::left("playlists")
             .resizable(true)
             .min_width(30.0)
@@ -617,6 +622,7 @@ impl eframe::App for TemplateApp {
                     }
 
                     if ui.input(|i| i.pointer.any_released()) {
+                        self.dragged_song_index = None;
                         if let (Some(from), Some(to)) = (dragging_index, drop_target_index) {
                             if from != to && to <= self.playlists.len() {
                                 let item = self.playlists.remove(from);
@@ -796,24 +802,37 @@ impl eframe::App for TemplateApp {
                             }
                         }
 
-                        let mut clicked_song_index: Option<usize> = None;
                         for i in start..end {
                             //let song = &mut self.songs.articles[i];
-                            if display_song_card(self, ctx, ui, i) {
-                                clicked_song_index = Some(i);
+                            let (clicked, move_to) = draw_song_card(self, ctx, ui, i);
+                            if clicked {
+                                let song: &SongCardData = &self.songs.articles[i];
+                                let path = song.path.clone();
+
+                                self.now_playing = Some(path.clone());
+                                self.now_playing_song = Some(song.clone());
+
+                                play_song(self, path);
+                            }
+                            if let Some(target_idx) = move_to {
+                                if let Some(source_idx) = self.dragged_song_index {
+                                    self.swap_request = Some((source_idx, target_idx));
+                                }
                             }
                         }
-
-                        if let Some(idx) = clicked_song_index {
-                            let song: &SongCardData = &self.songs.articles[idx];
-                            let path = song.path.clone();
-
-                            self.now_playing = Some(path.clone());
-                            self.now_playing_song = Some(song.clone());
-
-                            play_song(self, path);
+                        if ui.input(|i| i.pointer.any_released()) {
+                            if let Some((from, to)) = self.swap_request {
+                                move_m3u_track(
+                                    self,
+                                    &path_to_string(
+                                        self.currently_selected_playlist_path.as_ref().unwrap(),
+                                    ),
+                                    from,
+                                    to,
+                                );
+                                self.swap_request = None;
+                            }
                         }
-
                         let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
                         ui.add_space(remaining_px); // makes scroll bar look big (2/2)  <- part of render buffer
                     });

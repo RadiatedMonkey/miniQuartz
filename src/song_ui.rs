@@ -1,11 +1,20 @@
 use egui::{Context, Ui, Color32, Id};
 
 use crate::TemplateApp;
-use crate::playlist::{SongCardData, add_to_playlist, remove_from_playlist};
-use crate::utilities::{path_to_string, path_to_string_name};
+use crate::playlist::{SongCardData, add_to_playlist, move_m3u_track, remove_from_playlist};
+use crate::utilities::{path_to_string, path_to_string_name, show_error};
 use crate::app::load_metadata_if_needed;
 /// UI ///
 /// Drawing functions
+/// 
+
+pub fn draw_drop_bar(ui: &mut egui::Ui, start: egui::Pos2, end: egui::Pos2) {
+    // This should be in a different UI file, since this UI file is meant to be juist for songs.
+            let stroke = egui::Stroke::new(2.0, ui.visuals().widgets.active.bg_fill);
+            ui.painter().line_segment([start, end], stroke);
+            ui.painter().circle_filled(start, 3.0, stroke.color);
+            ui.painter().circle_filled(end, 3.0, stroke.color);
+        }
 
 pub fn right_click_song_card(
     app: &mut TemplateApp,
@@ -43,139 +52,183 @@ pub fn right_click_song_card(
             app.songs.articles[index].display = false;
         }
     }
+    if ui.button("Move up").clicked(){
+        move_m3u_track(app, &path_to_string(&app.currently_selected_playlist_path.as_ref().unwrap()), index, index-1);
+    }
 }
 
 
-pub fn display_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usize) -> bool{
+pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usize) -> (bool, Option<usize>){
     let song = &mut app.songs.articles[i];
     let mut clicked = false;
-    if song.display {
-        load_metadata_if_needed(song, app.metadata_sender.clone());
-        song.load_texture_if_needed(ctx);
-        ui.spacing_mut().item_spacing.y = 0.0;
-        let response = ui
-            .scope_builder(
-                egui::UiBuilder::new()
-                    .id_salt("song_card")
-                    .sense(egui::Sense::click()),
-                |ui| {
-                    let response = ui.response();
-                    let visuals = ui.style().interact(&response);
-                    let fill_color =
-                        if response.hovered() || response.has_focus() {
-                            visuals.bg_fill.gamma_multiply(0.3)
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        };
-                    egui::Frame::new()
-                        .fill(fill_color)
-                        //.stroke(visuals.bg_stroke)
-                        .inner_margin(ui.spacing().menu_margin)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label((i + 1).to_string());
-                                ui.scope(|ui| {
-                                    ui.set_width(
-                                        app.title_header_width + 25.0,
-                                    );
-                                    if let Some(tex) = &song.texture {
-                                        ui.add(
-                                            egui::Image::new(tex)
-                                                .max_width(30.0)
-                                                .corner_radius(3), // todo: this should be user configurable. some people haaate corner radius on album art
-                                        );
-                                    } else {
-                                        ui.add(
-                                            egui::Spinner::new()
-                                                .size(30.0) 
-                                                .color(egui::Color32::BLUE),
-                                                /* for some reason the spinner is slightly larger than the image, despite being 30.0?
-                                                    it might have some sort of padding, but im not sure how to change that. */
-                                        );
-                                    }
-                                    ui.vertical(|ui| {
-                                        // song & artist names
-                                        let color = if app.now_playing
-                                        /* todo: this should be based off of the ID in the list, and the currently selected playlist.
-                                        Will need to also add logic in the song reordering area to change the currently selected ID */
-                                        == Some(song.path.clone())
-                                        {
-                                            Color32::from_rgb(255, 128, 0) // make this configurable later
-                                        } else {
-                                            ui.visuals().strong_text_color()
-                                        };
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(
-                                                    &song.title,
-                                                )
-                                                .color(color),
-                                            )
-                                            .truncate(),
-                                        );
-                                        ui.add(
-                                            egui::Label::new(&song.artist)
-                                                .truncate(),
-                                        );
-                                    });
-                                });
-                                let remaining_width =
-                                    ui.available_width() - 60.0;
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(
-                                        remaining_width,
-                                        ui.available_height(),
-                                    ),
-                                    egui::Layout::left_to_right(
-                                        egui::Align::Center,
-                                    ),
-                                    |ui| {
-                                        ui.add(
-                                            egui::Label::new(&song.album)
-                                                .truncate(),
-                                        );
-                                    },
+    let mut move_to = None;
+    let title = song.title.clone();
+    if !song.display { return (false, None)}
+
+    load_metadata_if_needed(song, app.metadata_sender.clone());
+    song.load_texture_if_needed(ctx);
+
+    ui.spacing_mut().item_spacing.y = 0.0;
+
+    let response = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .id_salt(&song.path)
+                .sense(egui::Sense::click_and_drag()),
+            |ui| {
+                let response = ui.response();
+
+            let is_upper_half = ui.input(|i| i.pointer.hover_pos()).map_or(true, |pos| pos.y < response.rect.center().y);
+
+            if response.drag_started() {
+                app.dragged_song_index = Some(i);
+            }
+            
+            if let Some(from_idx) = app.dragged_song_index {
+                if response.contains_pointer() && from_idx != i {
+                    let rect = response.rect;
+                    let mut start = rect.left_bottom();
+                    let mut end = rect.right_bottom();
+                    if is_upper_half {
+                        move_to = Some(i);
+                        start = rect.left_top();
+                        end = rect.right_top();
+                    } else{
+                        move_to = Some(i+1);
+                    }
+                    draw_drop_bar(ui, start, end);
+                }
+            }
+
+            let visuals = ui.style().interact(&response);
+            let fill_color =
+                if response.contains_pointer() || response.has_focus() {
+                    visuals.bg_fill.gamma_multiply(0.3)
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+            egui::Frame::new()
+                .fill(fill_color)
+                .inner_margin(ui.spacing().menu_margin)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label((i + 1).to_string());
+                        ui.scope(|ui| {
+                            ui.set_width(
+                                app.title_header_width + 25.0,
+                            );
+                            if let Some(tex) = &song.texture {
+                                ui.add(
+                                    egui::Image::new(tex)
+                                        .max_width(30.0)
+                                        .corner_radius(3), // todo: this should be user configurable. some people haaate corner radius on album art
                                 );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(
-                                        egui::Align::TOP,
-                                    ),
-                                    |ui| {
-                                        ui.add_space(10.0);
-                                        ui.label(format!(
-                                            "{}",
-                                            &song.length
-                                        ));
-                                        //ui.label(path_to_string(&song.path));
-                                    },
+                            } else {
+                                ui.add(
+                                    egui::Spinner::new()
+                                        .size(30.0) 
+                                        .color(egui::Color32::BLUE),
+                                        /* for some reason the spinner is slightly larger than the image, despite being 30.0?
+                                            it might have some sort of padding, but im not sure how to change that. */
+                                );
+                            }
+                            ui.vertical(|ui| {
+                                // song & artist names
+                                let color = if app.now_playing
+                                /* todo: this should be based off of the ID in the list, and the currently selected playlist.
+                                Will need to also add logic in the song reordering area to change the currently selected ID */
+                                == Some(song.path.clone())
+                                {
+                                    Color32::from_rgb(255, 128, 0) // make this configurable later
+                                } else {
+                                    ui.visuals().strong_text_color()
+                                };
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(
+                                            &song.title,
+                                        )
+                                        .color(color),
+                                    )
+                                    .truncate(),
+                                );
+                                ui.add(
+                                    egui::Label::new(&song.artist)
+                                        .truncate(),
                                 );
                             });
                         });
-                },
-            )
-            .response;
-        if response.double_clicked() {
-            clicked = true;
-        }
-
-        if app.row_height.is_none() {
-            app.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
-        } // this really only needs to be done on startup
-
-        if app.now_playing == Some(song.path.clone()) {
-            // todo: this check should be based on file *and* playlist!
-            ui.painter().rect_filled(
-                response.rect,
-                4.0,
-                egui::Color32::from_white_alpha(10),
-            );
-        }
-        let song_send = song.clone();
-        app.apply_options(
-            egui::Popup::context_menu(&response)
-                .id(Id::new(format!("context_menu{}", i))),
+                        let remaining_width =
+                            ui.available_width() - 60.0;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(
+                                remaining_width,
+                                ui.available_height(),
+                            ),
+                            egui::Layout::left_to_right(
+                                egui::Align::Center,
+                            ),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(&song.album)
+                                        .truncate(),
+                                );
+                            },
+                        );
+                        ui.with_layout(
+                            egui::Layout::right_to_left(
+                                egui::Align::TOP,
+                            ),
+                            |ui| {
+                                ui.add_space(10.0);
+                                ui.label(format!(
+                                    "{}",
+                                    &song.length
+                                ));
+                                //ui.label(path_to_string(&song.path));
+                            },
+                        );
+                    });
+                });
+            },
         )
-        .show(|ui| right_click_song_card(app, ui, song_send, i));
+        .response;
+    if response.double_clicked() {
+        clicked = true;
     }
-    clicked
+
+    if app.row_height.is_none() {
+        app.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
+    } // this really only needs to be done on startup
+
+    if app.now_playing == Some(song.path.clone()) {
+        // todo: this check should be based on file *and* playlist!
+        ui.painter().rect_filled(
+            response.rect,
+            4.0,
+            egui::Color32::from_white_alpha(10),
+        );
+    }
+    let song_send = song.clone();
+    app.apply_options(
+        egui::Popup::context_menu(&response)
+            .id(Id::new(format!("context_menu{}", i))),
+    )
+    .show(|ui| right_click_song_card(app, ui, song_send, i));
+
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+        egui::Tooltip::always_open(
+            ui.ctx().clone(), // is clone right here? feels wrong dunno why
+            ui.layer_id(),
+            egui::Id::new("playlist_drag_tooltip"),
+            egui::Pos2::ZERO,
+        )
+        .at_pointer()
+        .show(|ui| {
+            ui.label(title);
+        });
+    }
+
+    (clicked, move_to)
 }
