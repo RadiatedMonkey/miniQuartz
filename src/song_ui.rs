@@ -158,7 +158,7 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
                                 Will need to also add logic in the song reordering area to change the currently selected ID */
                                 == Some(song.path.clone())
                                 {
-                                    Color32::from_rgb(255, 128, 0) // make this configurable later
+                                    ui.visuals().selection.stroke.color // make this configurable later
                                 } else {
                                     ui.visuals().strong_text_color()
                                 };
