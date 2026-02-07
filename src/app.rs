@@ -88,7 +88,7 @@ pub struct TemplateApp {
     pub drag_origin: Option<egui::Pos2>,
     pub test_thing: Option<f32>,
     pub dragging_song: Option<usize>,
-    
+
     #[serde(skip)]
     pub warning_show: bool,
     #[serde(skip)]
@@ -99,6 +99,8 @@ pub struct TemplateApp {
     #[serde(skip)]
     pub playlist_to_rename: Option<PathBuf>,
     pub rename_to: String,
+    #[serde(skip)]
+    pub m3u_sender: Sender<M3uEditTask>,
 
     //popup
     pub align4: egui::RectAlign,
@@ -129,6 +131,22 @@ impl Default for TemplateApp {
                         data: metadata,
                     });
                 }
+            }
+        });
+
+        let (sender_m3u, receiver_m3u) = std::sync::mpsc::channel::<M3uEditTask>();
+
+        std::thread::spawn(move || {
+            while let Ok(task) = receiver_m3u.recv() {
+                let _ = edit_m3u_track(
+                    &task.path,
+                    task.index,
+                    task.album,
+                    task.artist,
+                    task.cover,
+                    task.title,
+                );
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         });
 
@@ -192,6 +210,8 @@ impl Default for TemplateApp {
             playlist_to_rename: None,
             rename_to: "Playlist Name".to_string(),
 
+            m3u_sender: sender_m3u, // I love shitty naming schemes (>w< )↗　
+
             //popup demo
             align4: egui::RectAlign::default(),
             gap: 4.0,
@@ -244,6 +264,16 @@ pub struct Metadata {
     album: String,
     cover_path: String,
 }
+
+struct M3uEditTask {
+    path: String,
+    index: usize,
+    album: String,
+    artist: String,
+    cover: String,
+    title: String,
+}
+
 // scared to move the multithreaded stuff to another file (～￣▽￣)～ but metadata stuff Should go somewhere else.
 pub fn get_metadata(
     discoverer: &gstreamer_pbutils::Discoverer,
@@ -593,7 +623,7 @@ impl eframe::App for TemplateApp {
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Unknown".to_string()); // unwrap_or_else might be unnecessary here, since a playlist should *never* not have a name; if it didn't, it wouldn't exist.
                         let playlist_name = &playlist_name[4..];
-                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui|{
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                             let response = ui
                                 .selectable_label(false, format!("📃  {}", &playlist_name))
                                 .interact(egui::Sense::drag());
@@ -601,12 +631,10 @@ impl eframe::App for TemplateApp {
                                 ui.data_mut(|d| d.insert_temp(list_id, i));
                             }
 
-                            let menu_id = ui.make_persistent_id(format!("context_menu_playlist{}", i));
-                            self.apply_options(
-                                egui::Popup::context_menu(&response)
-                                    .id(menu_id),
-                            )
-                            .show(|ui| right_click_playlist(self, ui, i));
+                            let menu_id =
+                                ui.make_persistent_id(format!("context_menu_playlist{}", i));
+                            self.apply_options(egui::Popup::context_menu(&response).id(menu_id))
+                                .show(|ui| right_click_playlist(self, ui, i));
 
                             if response.dragged() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
@@ -624,8 +652,10 @@ impl eframe::App for TemplateApp {
 
                             if response.clicked() {
                                 self.songs = Songs::new(&self.playlists[i]);
-                                self.currently_selected_playlist_name = Some(playlist_name.to_string());
-                                self.currently_selected_playlist_path = self.playlists[i].to_path_buf();
+                                self.currently_selected_playlist_name =
+                                    Some(playlist_name.to_string());
+                                self.currently_selected_playlist_path =
+                                    self.playlists[i].to_path_buf();
                             }
 
                             let rect = response.rect;
@@ -637,7 +667,7 @@ impl eframe::App for TemplateApp {
                                         Some(if pos.y < rect.center().y { i } else { i + 1 });
                                 }
                             }
-                            
+
                             if let Some(target) = drop_target_index {
                                 // drop indicator
                                 if target == i {
@@ -651,11 +681,11 @@ impl eframe::App for TemplateApp {
                         });
                     }
 
-                    if self.warning_show{
+                    if self.warning_show {
                         // todo: modal struct so that you don't have a million variables for every modal
                         delete_playlist_warning(self, ui);
                     }
-                    if self.rename_playlist_show{
+                    if self.rename_playlist_show {
                         rename_playlist(self, ui);
                     }
 
@@ -795,9 +825,7 @@ impl eframe::App for TemplateApp {
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
 
-                        for result in self.metadata_receiver.try_iter().take(5) {
-                            // If loading is slow, increase this.
-
+                        for result in self.metadata_receiver.try_iter().take(1) {
                             for (index, song) in self
                                 .songs
                                 .articles
@@ -814,15 +842,24 @@ impl eframe::App for TemplateApp {
                                 let playlist_path = path_to_string(
                                     &self.currently_selected_playlist_path.to_path_buf(),
                                 );
-                                let _ = edit_m3u_track(
-                                    // todo: actual error handling
-                                    &playlist_path,
-                                    index,
-                                    song.album.clone(),
-                                    song.artist.clone(),
-                                    song.cover_path.clone(),
-                                    song.title.clone(),
-                                );
+                                let _ = self
+                                    .m3u_sender
+                                    .send(M3uEditTask {
+                                        path: path_to_string(
+                                            &self.currently_selected_playlist_path.to_path_buf(),
+                                        ),
+                                        index,
+                                        album: song.album.clone(),
+                                        artist: song.artist.clone(),
+                                        cover: song.cover_path.clone(),
+                                        title: song.title.clone(),
+                                    })
+                                    .unwrap();
+                                /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
+                                because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
+                                A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺 
+                                Really though I think it should be possible to pass a vec of M3uEditTask's and have the thread
+                                go through every item in the vec. */
                             }
                         }
                         // / //                 // / //
