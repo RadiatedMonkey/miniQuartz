@@ -84,7 +84,7 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
                 app.drag_origin = None;
                 app.dragging_song = None;
             }
-            if response.is_pointer_button_down_on(){
+            if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down()){
                 app.dragging_song = Some(i);
                 app.drag_origin = ui.input(|i| i.pointer.press_origin());
             }
