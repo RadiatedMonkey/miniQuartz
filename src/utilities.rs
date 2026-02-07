@@ -13,7 +13,7 @@ pub fn to_base62(mut n: usize, width: usize) -> String {
     let mut result = Vec::new();
 
     if n == 0 {
-        result.push(charset[0]);
+        result.push(charset[0]); 
     } else {
         while n > 0 {
             result.push(charset[n % 62]);

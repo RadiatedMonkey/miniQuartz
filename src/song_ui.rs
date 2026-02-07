@@ -1,4 +1,6 @@
-use egui::{Context, Ui, Color32, Id};
+use std::path::PathBuf;
+
+use egui::{Context, Ui, Id};
 
 use crate::TemplateApp;
 use crate::playlist::{SongCardData, add_to_playlist, move_m3u_track, remove_from_playlist};
@@ -23,7 +25,7 @@ pub fn right_click_song_card(
     song_data: SongCardData,
     index: usize,
 ) {
-    ui.set_max_width(200.0); // To make sure we wrap long text
+    ui.set_max_width(200.0);
 
     ui.menu_button("Add to playlist", |ui| {
         for playlist in &app.playlists {
@@ -57,6 +59,21 @@ pub fn right_click_song_card(
     }
 }
 
+pub fn right_click_playlist(
+    app: &mut TemplateApp,
+    ui: &mut egui::Ui,
+    playlist_index: usize,
+) {
+    ui.set_max_width(200.0);
+    let playlist = &app.playlists[playlist_index];
+    if ui.button("Rename playlist").clicked() {
+
+    }
+    if ui.button("Delete playlist").clicked(){
+        app.warning_show = true;
+        app.playlist_to_delete = Some(playlist.to_path_buf());
+    }
+}
 
 pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usize) -> (bool, Option<usize>){
     let song = &mut app.songs.articles[i];

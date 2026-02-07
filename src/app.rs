@@ -7,7 +7,6 @@ use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
-use std::f64::consts::E;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -20,12 +19,15 @@ use crate::utilities::*;
 
 const PLAYLIST_PAGE: usize = 0;
 const SETTINGS_PAGE: usize = 1;
+// Later on, these constants should be used as a way to switch what's displayed in the central panel.
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
     // probably not everything needs to be pub, but is there a reason not to?
+
+    // TODO: A lot of these things can be grouped into structs!!!
     #[serde(skip)]
     pub songs: Songs,
 
@@ -61,10 +63,10 @@ pub struct TemplateApp {
     pub volume: f32,
 
     #[serde(skip)]
-    pub folders: Vec<std::path::PathBuf>,
+    pub folders: Vec<PathBuf>,
 
     #[serde(skip)]
-    pub playlists: Vec<std::path::PathBuf>,
+    pub playlists: Vec<PathBuf>,
 
     pub currently_selected_playlist_name: Option<String>,
     pub currently_selected_playlist_path: PathBuf,
@@ -86,6 +88,11 @@ pub struct TemplateApp {
     pub drag_origin: Option<egui::Pos2>,
     pub test_thing: Option<f32>,
     pub dragging_song: Option<usize>,
+    
+    #[serde(skip)]
+    pub warning_show: bool,
+    #[serde(skip)]
+    pub playlist_to_delete: Option<PathBuf>,
 
     //popup
     pub align4: egui::RectAlign,
@@ -171,6 +178,9 @@ impl Default for TemplateApp {
             drag_origin: None,
             test_thing: None,
             dragging_song: None,
+
+            warning_show: false,
+            playlist_to_delete: None,
 
             //popup demo
             align4: egui::RectAlign::default(),
@@ -573,53 +583,92 @@ impl eframe::App for TemplateApp {
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Unknown".to_string()); // unwrap_or_else might be unnecessary here, since a playlist should *never* not have a name; if it didn't, it wouldn't exist.
                         let playlist_name = &playlist_name[4..];
-                        let response = ui
-                            .selectable_label(false, format!("📃  {}", &playlist_name))
-                            .interact(egui::Sense::drag());
-                        if response.drag_started() {
-                            ui.data_mut(|d| d.insert_temp(list_id, i));
-                        }
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui|{
+                            let response = ui
+                                .selectable_label(false, format!("📃  {}", &playlist_name))
+                                .interact(egui::Sense::drag());
+                            if response.drag_started() {
+                                ui.data_mut(|d| d.insert_temp(list_id, i));
+                            }
 
-                        if response.dragged() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-                            egui::Tooltip::always_open(
-                                ui.ctx().clone(), // is clone right here? feels wrong dunno why
-                                ui.layer_id(),
-                                egui::Id::new("playlist_drag_tooltip"),
-                                egui::Pos2::ZERO,
+                            let menu_id = ui.make_persistent_id(format!("context_menu_playlist{}", i));
+                            self.apply_options(
+                                egui::Popup::context_menu(&response)
+                                    .id(menu_id),
                             )
-                            .at_pointer()
-                            .show(|ui| {
-                                ui.label(playlist_name);
-                            });
-                        }
+                            .show(|ui| right_click_playlist(self, ui, i));
 
-                        if response.clicked() {
-                            self.songs = Songs::new(&self.playlists[i]);
-                            self.currently_selected_playlist_name = Some(playlist_name.to_string());
-                            self.currently_selected_playlist_path = self.playlists[i].to_path_buf();
-                        }
-
-                        let rect = response.rect;
-                        if let (Some(pos), Some(_)) =
-                            (ui.input(|i| i.pointer.interact_pos()), dragging_index)
-                        {
-                            if rect.contains(pos) {
-                                drop_target_index =
-                                    Some(if pos.y < rect.center().y { i } else { i + 1 });
+                            if response.dragged() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                                egui::Tooltip::always_open(
+                                    ui.ctx().clone(), // is clone right here? feels wrong dunno why
+                                    ui.layer_id(),
+                                    egui::Id::new("playlist_drag_tooltip"),
+                                    egui::Pos2::ZERO,
+                                )
+                                .at_pointer()
+                                .show(|ui| {
+                                    ui.label(playlist_name);
+                                });
                             }
-                        }
 
-                        if let Some(target) = drop_target_index {
-                            // drop indicator
-                            if target == i {
-                                draw_drop_bar(ui, rect.left_top(), rect.right_top());
-                            } else if target == self.playlists.len()
-                                && i == self.playlists.len() - 1
+                            if response.clicked() {
+                                self.songs = Songs::new(&self.playlists[i]);
+                                self.currently_selected_playlist_name = Some(playlist_name.to_string());
+                                self.currently_selected_playlist_path = self.playlists[i].to_path_buf();
+                            }
+
+                            let rect = response.rect;
+                            if let (Some(pos), Some(_)) =
+                                (ui.input(|i| i.pointer.interact_pos()), dragging_index)
                             {
-                                draw_drop_bar(ui, rect.left_bottom(), rect.right_bottom());
+                                if rect.contains(pos) {
+                                    drop_target_index =
+                                        Some(if pos.y < rect.center().y { i } else { i + 1 });
+                                }
                             }
-                        }
+                            
+                            if let Some(target) = drop_target_index {
+                                // drop indicator
+                                if target == i {
+                                    draw_drop_bar(ui, rect.left_top(), rect.right_top());
+                                } else if target == self.playlists.len()
+                                    && i == self.playlists.len() - 1
+                                {
+                                    draw_drop_bar(ui, rect.left_bottom(), rect.right_bottom());
+                                }
+                            }
+                        });
+                    }
+
+                    if self.warning_show{ // todo: make ONE modal check, and pass all required variables in/out of it.
+                        Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
+                            ui.set_width(200.0);
+                            ui.heading("Delete playlist?");
+
+                            ui.add_space(32.0);
+
+                            egui::Sides::new().show(
+                                ui,
+                                |_ui| {},
+                                |ui| {
+                                    if ui.button("Yes").clicked() {
+                                        self.warning_show = false;
+                                        if self.playlist_to_delete.is_some(){
+                                            if let Err(e) = fs::remove_file(self.playlist_to_delete.as_ref().unwrap()){
+                                                show_error(self, format!("Failed to delete file: {}",e.to_string()));
+                                            }
+                                            self.playlists = get_playlists("./playlists/").unwrap_or_default();
+                                        }
+                                    }
+
+                                    if ui.button("Cancel").clicked() {
+                                        self.warning_show = false;
+                                        self.playlist_to_delete = None;
+                                    }
+                                },
+                            );
+                        });
                     }
 
                     if ui.selectable_label(false, "+").clicked() {
