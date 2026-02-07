@@ -7,6 +7,7 @@ use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
+use std::f64::consts::E;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -17,6 +18,9 @@ use crate::playlist::*;
 use crate::song_ui::*;
 use crate::utilities::*;
 
+const PLAYLIST_PAGE: usize = 0;
+const SETTINGS_PAGE: usize = 1;
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -24,6 +28,9 @@ pub struct TemplateApp {
     // probably not everything needs to be pub, but is there a reason not to?
     #[serde(skip)]
     pub songs: Songs,
+
+    #[serde(skip)]
+    pub queue: Songs,
 
     #[serde(skip)]
     pub row_height: Option<f32>,
@@ -60,7 +67,7 @@ pub struct TemplateApp {
     pub playlists: Vec<std::path::PathBuf>,
 
     pub currently_selected_playlist_name: Option<String>,
-    pub currently_selected_playlist_path: Option<PathBuf>,
+    pub currently_selected_playlist_path: PathBuf,
 
     pub now_playing: Option<PathBuf>,
 
@@ -118,6 +125,7 @@ impl Default for TemplateApp {
 
         Self {
             songs: Songs::new(&std::path::PathBuf::from("./playlists/")),
+            queue: Songs::new(&std::path::PathBuf::from("queue.m3u")),
             row_height: None,
             col1_width: None,
             col2_width: None,
@@ -135,7 +143,7 @@ impl Default for TemplateApp {
             playlists: get_playlists("./playlists/").unwrap_or_default(),
 
             currently_selected_playlist_name: None,
-            currently_selected_playlist_path: Some(std::path::PathBuf::from("")),
+            currently_selected_playlist_path: std::path::PathBuf::from(""),
 
             now_playing: None,
 
@@ -187,13 +195,11 @@ impl TemplateApp {
 
         initialize_gstreamer(&mut app);
 
-        if let Some(path) = app.currently_selected_playlist_path.as_ref() {
-            if path.exists() {
-                // Check bc user may have deleted folder
-                app.songs = Songs::new(path);
-            } else {
-                app.currently_selected_playlist_name = Some("Playlist not found".to_owned());
-            }
+        if app.currently_selected_playlist_path.exists() {
+            // Check bc user may have deleted folder
+            app.songs = Songs::new(&app.currently_selected_playlist_path);
+        } else {
+            app.currently_selected_playlist_name = Some("Playlist not found".to_owned());
         }
 
         app
@@ -559,7 +565,7 @@ impl eframe::App for TemplateApp {
                         let local_path = std::path::PathBuf::from("playlists/playlist-1"); // todo: make user configurable
                         self.songs = Songs::new_from_folder(&local_path);
                         self.currently_selected_playlist_name = Some("Local Files".to_string());
-                        self.currently_selected_playlist_path = Some(local_path);
+                        self.currently_selected_playlist_path = local_path;
                     }
                     for i in 0..self.playlists.len() {
                         let playlist_name = self.playlists[i]
@@ -591,8 +597,7 @@ impl eframe::App for TemplateApp {
                         if response.clicked() {
                             self.songs = Songs::new(&self.playlists[i]);
                             self.currently_selected_playlist_name = Some(playlist_name.to_string());
-                            self.currently_selected_playlist_path =
-                                Some(self.playlists[i].to_path_buf());
+                            self.currently_selected_playlist_path = self.playlists[i].to_path_buf();
                         }
 
                         let rect = response.rect;
@@ -626,20 +631,34 @@ impl eframe::App for TemplateApp {
                         }
                         self.playlists = get_playlists("./playlists/").unwrap_or_default();
                     }
-                    ui.label(format!("{}",self.drag_origin.unwrap_or(egui::Pos2::new(0.0,0.0))));
-                    ui.label(format!("{}",self.test_thing.unwrap_or(0.0)));
+                    ui.label(format!(
+                        "{}",
+                        self.drag_origin.unwrap_or(egui::Pos2::new(0.0, 0.0))
+                    ));
+                    ui.label(format!("{}", self.test_thing.unwrap_or(0.0)));
+                    ui.label(format!(
+                        "{}",
+                        path_to_string(&self.currently_selected_playlist_path)
+                    ));
 
                     if ui.input(|i| i.pointer.any_released()) {
                         self.dragged_song_index = None;
                         if let (Some(from), Some(to)) = (dragging_index, drop_target_index) {
                             if from != to && to <= self.playlists.len() {
                                 let item = self.playlists.remove(from);
-                                let insert_at = if to > from { to - 1 } else { to };
+                                let mut insert_at = if to > from { to - 1 } else { to };
+                                if to > self.playlists.len() {
+                                    // is this necessary? i think so.
+                                    //show_error(self, "meoww".to_string());
+                                    insert_at = to - 1;
+                                }
                                 self.playlists.insert(insert_at, item);
 
                                 let mut count = 0;
+
                                 for mut playlist in self.playlists.clone() {
                                     let old_path = playlist.clone();
+                                    let selected = &playlist == &self.currently_selected_playlist_path;
                                     let file_name = path_to_string_name(&playlist);
                                     let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
                                     // ^^ this is done in case a playlist file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
@@ -647,17 +666,27 @@ impl eframe::App for TemplateApp {
                                     playlist.set_file_name(format!("{:04}{}", count62, clean_name));
                                     self.playlists[count] = playlist.clone(); // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
                                     let _ = &playlist.set_extension("m3utmp");
-
-                                    if let Err(error) = fs::rename(&old_path, &playlist) {
-                                        show_error(
-                                            self,
-                                            format!(
-                                                "err: {} | from: {} | to: {}",
-                                                error.to_string(),
-                                                path_to_string(&old_path),
-                                                path_to_string(&playlist),
-                                            ),
-                                        );
+                                    if playlist.file_name() != self.currently_selected_playlist_name.as_ref().map(std::ffi::OsStr::new)
+                                    /*  this check is useless if .file_name returns the extension aswell.
+                                        meant to be a bit of an optimization, so that we do not rename playlists that aren't being rearranged.
+                                        though, i'm not sure if it's working right. i do not think it is, actually! */
+                                    {
+                                        if let Err(error) = fs::rename(&old_path, &playlist) {
+                                            show_error(
+                                                self,
+                                                format!(
+                                                    "err: {} | from: {} | to: {}",
+                                                    error.to_string(),
+                                                    path_to_string(&old_path),
+                                                    path_to_string(&playlist),
+                                                ),
+                                            );
+                                        }
+                                        if selected {
+                                            playlist.set_extension("m3u");
+                                            self.currently_selected_playlist_path = playlist;
+                                            //show_error(self, "Meow! Selected moved.".to_string());
+                                        }
                                     }
                                     count += 1;
                                 }
@@ -754,7 +783,11 @@ impl eframe::App for TemplateApp {
                 // Nested panels don't usually behave well but it works so idk lol.
                 ScrollArea::vertical()
                     //.max_width(available_width-5.0)
-                    .scroll_source(egui::containers::scroll_area::ScrollSource{scroll_bar: true, drag: false, mouse_wheel: true})
+                    .scroll_source(egui::containers::scroll_area::ScrollSource {
+                        scroll_bar: true,
+                        drag: false,
+                        mouse_wheel: true,
+                    })
                     .show(ui, |ui| {
                         // render buffer stuff
                         let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
@@ -793,11 +826,7 @@ impl eframe::App for TemplateApp {
                                 }
                                 song.cover_path = result.data.cover_path.clone();
                                 let playlist_path = path_to_string(
-                                    &self
-                                        .currently_selected_playlist_path
-                                        .as_ref()
-                                        .unwrap()
-                                        .to_path_buf(),
+                                    &self.currently_selected_playlist_path.to_path_buf(),
                                 );
                                 let _ = edit_m3u_track(
                                     // todo: actual error handling
@@ -852,14 +881,14 @@ impl eframe::App for TemplateApp {
                         }
                         if ui.input(|i| i.pointer.any_released()) {
                             if let Some((from, to)) = self.swap_request {
-                                move_m3u_track(
+                                if let Err(e) = move_m3u_track(
                                     self,
-                                    &path_to_string(
-                                        self.currently_selected_playlist_path.as_ref().unwrap(),
-                                    ),
+                                    &path_to_string(&self.currently_selected_playlist_path),
                                     from,
                                     to,
-                                );
+                                ) {
+                                    show_error(self, e.to_string());
+                                }
                                 self.swap_request = None;
                             }
                         }

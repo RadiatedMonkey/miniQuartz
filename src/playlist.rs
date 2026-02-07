@@ -1,6 +1,6 @@
 use std::fs;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Error, Write};
 use std::path::{Path, PathBuf};
 
 use crate::TemplateApp;
@@ -300,22 +300,26 @@ pub fn edit_m3u_track(
     Ok(())
 }
 
-pub fn move_m3u_track(app: &mut TemplateApp, file_path: &str, from: usize, to: usize) {
+pub fn move_m3u_track(app: &mut TemplateApp, file_path: &str, from: usize, to: usize) -> std::io::Result<()> {
     // todo: make this function return an error if it has an error
     let mut playlist = read_m3u(file_path).unwrap(); // todo: check for valid result from read_m3u
-
-    /*if from >= playlist.entries.len() || to >= playlist.entries.len(){
-        return Err("Index out of bounds".into());
-    }*/
-
+    
     let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
     let insert_at = if from < to { to - 1 } else { to };
+    
+    //if from >= playlist.entries.len() || insert_at >= playlist.entries.len(){
+    //    return Err(Error::new(std::io::ErrorKind::Other, format!("playlist::move_m3u_track : Index failure. From:{}, To:{}, Len:{}",from,to,playlist.entries.len())));
+    //}
+    /* im not really sure whats going on that is causing this check to be freaky? can't explain just check it out and try moving songs to/from the very bottom of a playlist.
+    i guess it's not really a big deal cus this shouldn't ever trigger.. but: todo: fix this error check */
 
     playlist.entries.insert(insert_at, entry);
     let song_card = app.songs.articles.remove(from);
     app.songs.articles.insert(insert_at, song_card);
 
     let _ = write_m3u(file_path, &playlist, true, false, true);
+
+    Ok(())
 }
 
 pub fn write_m3u<P: AsRef<Path>>(

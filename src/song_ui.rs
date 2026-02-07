@@ -43,10 +43,7 @@ pub fn right_click_song_card(
     });
     if ui.button("Remove from playlist").clicked() {
         let playlist_path = path_to_string(
-            &app.currently_selected_playlist_path
-                .as_ref()
-                .unwrap()
-                .to_path_buf(),
+            &app.currently_selected_playlist_path.to_path_buf(),
         );
         let _ = remove_from_playlist(&playlist_path, index);
         if let Some(index) = app.songs.articles.iter().position(|x| x == &song_data) {
@@ -54,7 +51,9 @@ pub fn right_click_song_card(
         }
     }
     if ui.button("Move up").clicked(){
-        move_m3u_track(app, &path_to_string(&app.currently_selected_playlist_path.as_ref().unwrap()), index, index-1);
+        if let Err(e) = move_m3u_track(app, &path_to_string(&app.currently_selected_playlist_path), index, index-1){
+            show_error(app, e.to_string());
+        }
     }
 }
 
