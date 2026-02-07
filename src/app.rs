@@ -94,6 +94,12 @@ pub struct TemplateApp {
     #[serde(skip)]
     pub playlist_to_delete: Option<PathBuf>,
 
+    #[serde(skip)]
+    pub rename_playlist_show: bool,
+    #[serde(skip)]
+    pub playlist_to_rename: Option<PathBuf>,
+    pub rename_to: String,
+
     //popup
     pub align4: egui::RectAlign,
     pub gap: f32,
@@ -181,6 +187,10 @@ impl Default for TemplateApp {
 
             warning_show: false,
             playlist_to_delete: None,
+
+            rename_playlist_show: false,
+            playlist_to_rename: None,
+            rename_to: "Playlist Name".to_string(),
 
             //popup demo
             align4: egui::RectAlign::default(),
@@ -641,34 +651,12 @@ impl eframe::App for TemplateApp {
                         });
                     }
 
-                    if self.warning_show{ // todo: make ONE modal check, and pass all required variables in/out of it.
-                        Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
-                            ui.set_width(200.0);
-                            ui.heading("Delete playlist?");
-
-                            ui.add_space(32.0);
-
-                            egui::Sides::new().show(
-                                ui,
-                                |_ui| {},
-                                |ui| {
-                                    if ui.button("Yes").clicked() {
-                                        self.warning_show = false;
-                                        if self.playlist_to_delete.is_some(){
-                                            if let Err(e) = fs::remove_file(self.playlist_to_delete.as_ref().unwrap()){
-                                                show_error(self, format!("Failed to delete file: {}",e.to_string()));
-                                            }
-                                            self.playlists = get_playlists("./playlists/").unwrap_or_default();
-                                        }
-                                    }
-
-                                    if ui.button("Cancel").clicked() {
-                                        self.warning_show = false;
-                                        self.playlist_to_delete = None;
-                                    }
-                                },
-                            );
-                        });
+                    if self.warning_show{
+                        // todo: modal struct so that you don't have a million variables for every modal
+                        delete_playlist_warning(self, ui);
+                    }
+                    if self.rename_playlist_show{
+                        rename_playlist(self, ui);
                     }
 
                     if ui.selectable_label(false, "+").clicked() {
@@ -703,58 +691,7 @@ impl eframe::App for TemplateApp {
                                 }
                                 self.playlists.insert(insert_at, item);
 
-                                let mut count = 0;
-
-                                for mut playlist in self.playlists.clone() {
-                                    let old_path = playlist.clone();
-                                    let selected = &playlist == &self.currently_selected_playlist_path;
-                                    let file_name = path_to_string_name(&playlist);
-                                    let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
-                                    // ^^ this is done in case a playlist file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
-                                    let count62 = to_base62(count, 4); // 14 million playlists gotta be enough.
-                                    playlist.set_file_name(format!("{:04}{}", count62, clean_name));
-                                    self.playlists[count] = playlist.clone(); // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
-                                    let _ = &playlist.set_extension("m3utmp");
-                                    if playlist.file_name() != self.currently_selected_playlist_name.as_ref().map(std::ffi::OsStr::new)
-                                    /*  this check is useless if .file_name returns the extension aswell.
-                                        meant to be a bit of an optimization, so that we do not rename playlists that aren't being rearranged.
-                                        though, i'm not sure if it's working right. i do not think it is, actually! */
-                                    {
-                                        if let Err(error) = fs::rename(&old_path, &playlist) {
-                                            show_error(
-                                                self,
-                                                format!(
-                                                    "err: {} | from: {} | to: {}",
-                                                    error.to_string(),
-                                                    path_to_string(&old_path),
-                                                    path_to_string(&playlist),
-                                                ),
-                                            );
-                                        }
-                                        if selected {
-                                            playlist.set_extension("m3u");
-                                            self.currently_selected_playlist_path = playlist;
-                                            //show_error(self, "Meow! Selected moved.".to_string());
-                                        }
-                                    }
-                                    count += 1;
-                                }
-                                for mut playlist in self.playlists.clone() {
-                                    let mut old_path = playlist.clone();
-                                    old_path.set_extension("m3utmp");
-                                    let _ = &playlist.set_extension("m3u");
-                                    if let Err(error) = fs::rename(&old_path, &playlist) {
-                                        show_error(
-                                            self,
-                                            format!(
-                                                "err: {} | from: {} | to: {}",
-                                                error.to_string(),
-                                                path_to_string(&old_path),
-                                                path_to_string(&playlist),
-                                            ),
-                                        );
-                                    }
-                                }
+                                reset_playlist_ids(self);
                             }
                         }
                         ui.data_mut(|d| d.remove::<usize>(list_id));

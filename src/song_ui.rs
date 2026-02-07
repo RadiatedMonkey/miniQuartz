@@ -6,6 +6,8 @@ use crate::TemplateApp;
 use crate::playlist::{SongCardData, add_to_playlist, move_m3u_track, remove_from_playlist};
 use crate::utilities::{path_to_string, path_to_string_name, show_error};
 use crate::app::load_metadata_if_needed;
+use crate::playlist::{get_playlists,reset_playlist_ids};
+
 /// UI ///
 /// Drawing functions
 /// 
@@ -67,7 +69,10 @@ pub fn right_click_playlist(
     ui.set_max_width(200.0);
     let playlist = &app.playlists[playlist_index];
     if ui.button("Rename playlist").clicked() {
-
+        app.rename_playlist_show = true;
+        app.playlist_to_rename = Some(playlist.to_path_buf());
+        let name = &path_to_string_name(playlist)[4..];
+        app.rename_to = name[..name.len()-4].to_string();
     }
     if ui.button("Delete playlist").clicked(){
         app.warning_show = true;
@@ -75,11 +80,100 @@ pub fn right_click_playlist(
     }
 }
 
+pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui){
+    egui::Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
+        ui.set_width(200.0);
+        ui.heading("Delete playlist?");
+
+        ui.add_space(32.0);
+
+        egui::Sides::new().show(
+            ui,
+            |_ui| {},
+            |ui| {
+                if ui.button("Yes").clicked() {
+                    app.warning_show = false;
+                    if app.playlist_to_delete.is_some(){
+                        if let Err(e) = std::fs::remove_file(app.playlist_to_delete.as_ref().unwrap()){
+                            show_error(app, format!("Failed to delete file: {}",e.to_string()));
+                        }
+                        app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get because one is now deleted & reset_playlist_ids wont like that
+                        reset_playlist_ids(app);
+                        app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get again because id's are now changed
+                        /* doing this twice? bleh.
+                        should just be removing the single removed playlist from ram or skipping it in get_playlists*/
+                    }
+                }
+
+                if ui.button("Cancel").clicked() {
+                    app.warning_show = false;
+                    app.playlist_to_delete = None;
+                }
+            },
+        );
+    });
+}
+
+pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui){
+    egui::Modal::new(Id::new("Playlist options")).show(ui.ctx(), |ui| {
+        ui.set_width(200.0);
+        ui.heading("Rename playlist");
+        let mut text = app.rename_to.clone();
+        ui.text_edit_singleline(&mut app.rename_to);
+
+        ui.add_space(32.0);
+
+        egui::Sides::new().show(
+            ui,
+            |_ui| {},
+            |ui| {
+                if ui.button("Save").clicked() {
+                    let idx = &path_to_string_name(&app.playlist_to_rename.as_ref().unwrap())[..4];
+                    let mut set_current = false;
+                    if &app.currently_selected_playlist_path == app.playlist_to_rename.as_ref().unwrap_or(&app.currently_selected_playlist_path){
+                        set_current = true;
+                    }
+                    text = format!("{}{}.m3u",idx,text);
+                    if let Some(old_path) = &app.playlist_to_rename{
+                        if let Some(parent) = old_path.parent(){
+                            let new_path = parent.join(&text);
+                            if &new_path != old_path{
+                                if new_path.try_exists().unwrap_or(false){
+                                    show_error(app,format!("Playlist already exists! If you're seeing this, something went very wrong (✿uwu)\nold path: {} \nnew path: {}",path_to_string(old_path),path_to_string(&new_path)));
+                                }else{
+                                    if let Err(error) = std::fs::rename(app.playlist_to_rename.as_ref().unwrap(), &new_path) {
+                                        show_error(
+                                            app,
+                                            format!(
+                                                "rename playlist err: {} | from: {} | to: {}",
+                                                error.to_string(),
+                                                path_to_string(&app.playlist_to_rename.as_ref().unwrap()),
+                                                text,
+                                            ),
+                                        );
+                                    }
+                                    app.playlists = get_playlists("./playlists/").unwrap_or_default();
+                                    if set_current{
+                                        app.currently_selected_playlist_path = new_path;
+                                        app.currently_selected_playlist_name = Some(text[4..].to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    app.rename_playlist_show = false;
+                    app.playlist_to_rename = None;
+                }
+            },
+        );
+    });
+}
+
 pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usize) -> (bool, Option<usize>){
     let song = &mut app.songs.articles[i];
     let mut clicked = false;
     let mut move_to = None;
-    let title = song.title.clone();
+    // let title = song.title.clone();
     if !song.display { return (false, None)}
 
     load_metadata_if_needed(song, app.metadata_sender.clone());

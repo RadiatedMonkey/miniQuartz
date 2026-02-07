@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Error, Write};
 use std::path::{Path, PathBuf};
 
 use crate::TemplateApp;
-use crate::utilities::path_to_string;
+use crate::utilities::{path_to_string,path_to_string_name,to_base62,show_error};
 
 /// PLAYLIST ///
 /// Song management & organization
@@ -300,13 +300,18 @@ pub fn edit_m3u_track(
     Ok(())
 }
 
-pub fn move_m3u_track(app: &mut TemplateApp, file_path: &str, from: usize, to: usize) -> std::io::Result<()> {
+pub fn move_m3u_track(
+    app: &mut TemplateApp,
+    file_path: &str,
+    from: usize,
+    to: usize,
+) -> std::io::Result<()> {
     // todo: make this function return an error if it has an error
     let mut playlist = read_m3u(file_path).unwrap(); // todo: check for valid result from read_m3u
-    
+
     let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
     let insert_at = if from < to { to - 1 } else { to };
-    
+
     //if from >= playlist.entries.len() || insert_at >= playlist.entries.len(){
     //    return Err(Error::new(std::io::ErrorKind::Other, format!("playlist::move_m3u_track : Index failure. From:{}, To:{}, Len:{}",from,to,playlist.entries.len())));
     //}
@@ -399,4 +404,62 @@ pub fn get_folders(path: &str) -> std::io::Result<Vec<PathBuf>> {
         .map(|entry| entry.path()) // Convert DirEntry to PathBuf
         .collect();
     Ok(folders)
+}
+
+pub fn reset_playlist_ids(app: &mut TemplateApp) {
+    let mut count = 0;
+    for mut playlist in app.playlists.clone() {
+        let old_path = playlist.clone();
+        let selected = &playlist == &app.currently_selected_playlist_path;
+        let file_name = path_to_string_name(&playlist);
+        let clean_name: String = file_name.chars().skip(4).collect(); // todo: when program more refined, check if you need it like this or if you can just do [4..]
+        // ^^ this is done in case a playlist file is ever put into folder that has less than 4 chars. shouldn't happen, but just in case.
+        let count62 = to_base62(count, 4); // 14 million playlists gotta be enough.
+        playlist.set_file_name(format!("{:04}{}", count62, clean_name));
+        app.playlists[count] = playlist.clone(); // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
+        let _ = &playlist.set_extension("m3utmp");
+        if playlist.file_name()
+            != app
+                .currently_selected_playlist_name
+                .as_ref()
+                .map(std::ffi::OsStr::new)
+        /*  this check is useless if .file_name returns the extension aswell.
+        meant to be a bit of an optimization, so that we do not rename playlists that aren't being rearranged.
+        though, i'm not sure if it's working right. i do not think it is, actually! */
+        {
+            if let Err(error) = fs::rename(&old_path, &playlist) {
+                show_error(
+                    app,
+                    format!(
+                        "err: {} | from: {} | to: {}",
+                        error.to_string(),
+                        path_to_string(&old_path),
+                        path_to_string(&playlist),
+                    ),
+                );
+            }
+            if selected {
+                playlist.set_extension("m3u");
+                app.currently_selected_playlist_path = playlist;
+                //show_error(self, "Meow! Selected moved.".to_string());
+            }
+        }
+        count += 1;
+    }
+    for mut playlist in app.playlists.clone() {
+        let mut old_path = playlist.clone();
+        old_path.set_extension("m3utmp");
+        let _ = &playlist.set_extension("m3u");
+        if let Err(error) = fs::rename(&old_path, &playlist) {
+            show_error(
+                app,
+                format!(
+                    "err: {} | from: {} | to: {}",
+                    error.to_string(),
+                    path_to_string(&old_path),
+                    path_to_string(&playlist),
+                ),
+            );
+        }
+    }
 }
