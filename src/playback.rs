@@ -6,7 +6,9 @@ use crate::utilities::{path_to_uri, show_error};
 /// PLAYBACK ///
 /// Functions for managing the audio stream
 pub fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
-    let _ = app.playbin.set_state(gstreamer::State::Null);
+    if let Err(e) = app.playbin.set_state(gstreamer::State::Null){
+        println!("play_song GStreamer error: {}",e);
+    }
 
     let cubic_volume = (app.volume * app.volume * app.volume) as f64; // cubic slider & gstreamer needs f64
     app.playbin.set_property("volume", cubic_volume); // set volume when you play a song for some reason i forgot. check probably. didnt make a comment b4, whoops
@@ -21,7 +23,10 @@ pub fn play_song(app: &mut TemplateApp, path: std::path::PathBuf) {
             "GStreamer: State change failed. Check if file exists or audio device is ready."
                 .to_owned(),
         );
-        let _ = app.playbin.set_state(gstreamer::State::Null);
+        eprintln!("GStreamer StateChangeError @ play_song: {}", "State change failed. Check if file exists or audio device is ready.".to_string());
+        if let Err(e) = app.playbin.set_state(gstreamer::State::Null){
+            eprintln!("play_song GStreamer error: {}",e);
+        }
     } else {
         app.now_playing = Some(path);
         app.duration_ms = 0;

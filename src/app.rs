@@ -7,7 +7,6 @@ use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
-use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -17,8 +16,8 @@ use crate::playlist::*;
 use crate::song_ui::*;
 use crate::utilities::*;
 
-const PLAYLIST_PAGE: usize = 0;
-const SETTINGS_PAGE: usize = 1;
+const _PLAYLIST_PAGE: usize = 0;
+const _SETTINGS_PAGE: usize = 1;
 // Later on, these constants should be used as a way to switch what's displayed in the central panel.
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -126,10 +125,12 @@ impl Default for TemplateApp {
 
             while let Ok(request) = req_rx.recv() {
                 if let Ok(metadata) = get_metadata(&discoverer, request.path.clone()) {
-                    let _ = result_tx.send(MetadataResult {
+                    if let Err(e) = result_tx.send(MetadataResult {
                         path: request.path,
                         data: metadata,
-                    });
+                    }) {
+                        println!("Metadata Request Error: {}", e);
+                    }
                 }
             }
         });
@@ -138,15 +139,40 @@ impl Default for TemplateApp {
 
         std::thread::spawn(move || {
             while let Ok(task) = receiver_m3u.recv() {
-                let _ = edit_m3u_track(
-                    &task.path,
-                    task.index,
-                    task.album,
-                    task.artist,
-                    task.cover,
-                    task.title,
-                );
-                //std::thread::sleep(std::time::Duration::from_millis(100));
+                match task {
+                    M3uEditTask::Edit(data) => {
+                        //println!("{}", "Queued: Edit m3u track");
+                        if let Err(e) = edit_m3u_track(
+                            &data.path,
+                            data.index,
+                            data.album,
+                            data.artist,
+                            data.cover,
+                            data.title,
+                        ) {
+                            eprintln!("Failed to edit m3u track @ metadata cache thread: {}", e);
+                        }
+                    }
+                    M3uEditTask::Add(data) => {
+                        println!("{}", "Queued: Adding m3u track");
+                        if let Err(e) = add_to_playlist(&data.file_path, &data.new_song) {
+                            eprintln!("Error adding m3u track: {}", e);
+                        }
+                    }
+                    M3uEditTask::Remove(data) => {
+                        println!("{}", "Queued: Removing m3u track");
+                        if let Err(e) = remove_from_playlist(&data.file_path, data.index_to_remove)
+                        {
+                            eprintln!("Error removing m3u track: {}", e);
+                        }
+                    }
+                    M3uEditTask::Move(data) => {
+                        println!("{}", "Queued: Moving m3u track");
+                        if let Err(e) = move_m3u_track(&data.file_path, data.from, data.to) {
+                            eprintln!("Error moving m3u track: {}", e);
+                        }
+                    }
+                }
             }
         });
 
@@ -210,7 +236,7 @@ impl Default for TemplateApp {
             playlist_to_rename: None,
             rename_to: "Playlist Name".to_string(),
 
-            m3u_sender: sender_m3u, // I love shitty naming schemes (>w< )↗　
+            m3u_sender: sender_m3u, // I love shitty naming schemes (>w< )↗
 
             //popup demo
             align4: egui::RectAlign::default(),
@@ -265,13 +291,36 @@ pub struct Metadata {
     cover_path: String,
 }
 
-pub struct M3uEditTask {
+pub struct EditTrack {
     path: String,
     index: usize,
     album: String,
     artist: String,
     cover: String,
     title: String,
+}
+
+pub struct AddTrack {
+    pub file_path: String,
+    pub new_song: SongCardData,
+}
+
+pub struct RemoveTrack {
+    pub file_path: String,
+    pub index_to_remove: usize,
+}
+
+pub struct MoveTrack {
+    file_path: String,
+    from: usize,
+    to: usize,
+}
+
+pub enum M3uEditTask {
+    Edit(EditTrack),
+    Add(AddTrack),
+    Remove(RemoveTrack),
+    Move(MoveTrack),
 }
 
 // scared to move the multithreaded stuff to another file (～￣▽￣)～ but metadata stuff Should go somewhere else.
@@ -377,9 +426,11 @@ pub fn load_metadata_if_needed(
     sender: std::sync::mpsc::Sender<MetadataRequest>,
 ) {
     if !song.metadata_loaded {
-        let _ = sender.send(MetadataRequest {
+        if let Err(e) = sender.send(MetadataRequest {
             path: song.path.clone(),
-        });
+        }) {
+            println!("load_metadata_if_needed Metadata Request error: {}", e);
+        }
         song.metadata_loaded = true; // i think this isn't actually waiting to get metadata
     }
 }
@@ -400,11 +451,17 @@ impl eframe::App for TemplateApp {
         for msg in bus.iter_timed(gstreamer::ClockTime::ZERO) {
             match msg.view() {
                 gstreamer::MessageView::Eos(..) => {
-                    let _ = self.playbin.set_state(gstreamer::State::Ready);
+                    if let Err(e) = self.playbin.set_state(gstreamer::State::Ready) {
+                        println!("GStreamer Error update() set_state: {}", e);
+                    }
                     self.now_playing = None; // todo: set this to first song playlist at end of queue
                 }
                 gstreamer::MessageView::Error(err) => {
-                    show_error(self, format!("GStreamer Error: {}", err.error().to_owned()));
+                    show_error(
+                        self,
+                        format!("GStreamer Error update() Error: {}", err.error().to_owned()),
+                    );
+                    println!("GStreamer Error: {}", err.error().to_owned());
                 }
                 _ => {}
             }
@@ -423,6 +480,7 @@ impl eframe::App for TemplateApp {
                         }
                         if (ui.button("Meoooww")).clicked() {
                             show_error(self, "Meow Button Pressed".to_owned());
+                            println!("{}", "Meow Button Pressed".to_string());
                         }
                     });
                     ui.add_space(16.0);
@@ -475,12 +533,20 @@ impl eframe::App for TemplateApp {
                                         self.playbin.set_state(gstreamer::State::Paused)
                                     {
                                         show_error(self, err.to_string());
+                                        eprintln!(
+                                            "GStreamer StateChangeError @ Play/Pause buttons: {}",
+                                            err.to_string()
+                                        );
                                     }
                                 } else if current == gstreamer::State::Paused {
                                     if let Err(err) =
                                         self.playbin.set_state(gstreamer::State::Playing)
                                     {
                                         show_error(self, err.to_string());
+                                        eprintln!(
+                                            "GStreamer StateChangeError @ Play/Pause buttons: {}",
+                                            err.to_string()
+                                        );
                                     }
                                 } else {
                                     let song_path =
@@ -695,6 +761,7 @@ impl eframe::App for TemplateApp {
                             create_empty_m3u(&format!("./playlists/{}new playlist.m3u", count))
                         {
                             show_error(self, error.to_string());
+                            eprintln!("create_empty_m3u error: {}", error.to_string());
                         }
                         self.playlists = get_playlists("./playlists/").unwrap_or_default();
                     }
@@ -825,7 +892,7 @@ impl eframe::App for TemplateApp {
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
 
-                        for result in self.metadata_receiver.try_iter() {
+                        for result in self.metadata_receiver.try_iter().take(1) {
                             for (index, song) in self
                                 .songs
                                 .articles
@@ -841,22 +908,21 @@ impl eframe::App for TemplateApp {
                                     song.title = path_to_string_name(&song.path);
                                 }
                                 song.cover_path = result.data.cover_path.clone();
-                                let _ = self
-                                    .m3u_sender
-                                    .send(M3uEditTask {
-                                        path: path_to_string(
-                                            &self.currently_selected_playlist_path.to_path_buf(),
-                                        ),
-                                        index,
-                                        album: song.album.clone(),
-                                        artist: song.artist.clone(),
-                                        cover: song.cover_path.clone(),
-                                        title: song.title.clone(),
-                                    })
-                                    .unwrap();
+                                if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
+                                    path: path_to_string(
+                                        &self.currently_selected_playlist_path.to_path_buf(),
+                                    ),
+                                    index,
+                                    album: song.album.clone(),
+                                    artist: song.artist.clone(),
+                                    cover: song.cover_path.clone(),
+                                    title: song.title.clone(),
+                                })) {
+                                    eprintln!("Failed to add metadata to queue: {}", e);
+                                }
                                 /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
                                 because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
-                                A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺 
+                                A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺
                                 Really though I think it should be possible to pass a vec of M3uEditTask's and have the thread
                                 go through every item in the vec. */
                             }
@@ -903,14 +969,18 @@ impl eframe::App for TemplateApp {
                         }
                         if ui.input(|i| i.pointer.any_released()) {
                             if let Some((from, to)) = self.swap_request {
-                                if let Err(e) = move_m3u_track(
-                                    self,
-                                    &path_to_string(&self.currently_selected_playlist_path),
-                                    from,
-                                    to,
-                                ) {
-                                    show_error(self, e.to_string());
-                                }
+                                self.m3u_sender
+                                    .send(M3uEditTask::Move(MoveTrack {
+                                        file_path: path_to_string(
+                                            &self.currently_selected_playlist_path,
+                                        ),
+                                        from,
+                                        to,
+                                    }))
+                                    .unwrap();
+                                let song_card = self.songs.articles.remove(from);
+                                let insert_at = if from < to { to - 1 } else { to };
+                                self.songs.articles.insert(insert_at, song_card);
                                 self.swap_request = None;
                             }
                         }

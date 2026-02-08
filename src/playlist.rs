@@ -140,7 +140,7 @@ pub fn add_to_playlist(
     let mut playlist = M3uPlaylist::new();
 
     playlist.add_track(
-        &format!("{}", path_to_string(&new_song.path)), // adding ../ so that the playlist files can be played in other players directly
+        &format!("{}", path_to_string(&new_song.path)),
         -1,
         &new_song.title,
         &new_song.artist,
@@ -148,7 +148,9 @@ pub fn add_to_playlist(
         &new_song.album,
     );
 
-    let _ = write_m3u(file_path, &playlist, false, true, false);
+    if let Err(e) = write_m3u(file_path, &playlist, false, true, false) {
+        println!("add_to_playlist write_m3u error: {}", e);
+    }
     Ok(())
 }
 
@@ -245,11 +247,18 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
         if trimmed.starts_with("#EXTINF:") {
             let content = &trimmed[8..];
             let parts: Vec<&str> = content.split('␟').collect(); // ␟ is the "Unit Separator" symbol, not the country code.
-            current_duration = parts[0].parse().unwrap_or(-1);
-            current_title = parts[1].trim().to_string();
-            current_artist = parts[2].trim().to_string();
-            current_cover_path = parts[3].trim().to_string();
-            current_album = parts[4].trim().to_string();
+            if parts.len() != 5 {
+                println!(
+                    "Read m3u error: Malformed playlist file, track missing full #EXTINF. This file may be corrupted or incompatible with MiniQuartz"
+                ); // would be really nice if the user could see this error!
+                break;
+            } else {
+                current_duration = parts[0].parse().unwrap_or(-1);
+                current_title = parts[1].trim().to_string();
+                current_artist = parts[2].trim().to_string();
+                current_cover_path = parts[3].trim().to_string();
+                current_album = parts[4].trim().to_string();
+            }
         } else if trimmed.starts_with('#') {
             continue;
         } else {
@@ -283,37 +292,56 @@ pub fn edit_m3u_track(
     title: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut playlist = read_m3u(file_path)?;
-    let entry = &playlist.entries[index];
-    if entry.album != album
-        || entry.artist != artist
-        || entry.cover_path != cover_path
-        || entry.title != title
-    {
-        if index < playlist.entries.len() {
-            playlist.entries[index].album = album;
-            playlist.entries[index].artist = artist;
-            playlist.entries[index].cover_path = cover_path;
-            playlist.entries[index].title = title;
-            // not setting path bc this already gets the path from the playlist file. they will always be equal.
-            // not setting length bc i dont think songs change in length often enough to warrant it
-        } else {
-            return Err("Index out of bounds".into());
+    if playlist.entries.len() < index {
+        println!("{}", "edit_m3u_track: Index out of bounds for m3u file");
+    } else {
+        let entry = &playlist.entries[index];
+        // albums are equaling true
+        if entry.album != album{
+            println!("ALBUM: entry: {}\nALBUM: actual: {}", entry.album, album)
         }
-        write_m3u(file_path, &playlist, true, false, true)?;
-    }
+        if entry.artist != artist{
+            println!("ARTIST: entry: {}\nARTIST: actual: {}", entry.artist, artist)
+        }
+        if entry.title != title{
+            println!("TITLE: entry: {}\nTITLE: actual: {}", entry.title, title);
+            println!("{}",if(entry.title==title){true}else{false});
+        }
+        if entry.cover_path != cover_path{
+            println!("COVER: entry: {}\nCOVER: actual: {}", entry.cover_path, cover_path)
+        }
 
+        if entry.album != album
+            || entry.artist != artist
+            || entry.cover_path != cover_path
+            || entry.title != title
+        {
+            if index < playlist.entries.len() {
+                playlist.entries[index].album = album;
+                playlist.entries[index].artist = artist;
+                playlist.entries[index].cover_path = cover_path;
+                playlist.entries[index].title = title;
+                write_m3u(file_path, &playlist, true, false, true)?;
+                //println!("{}","Done: Edited m3u track")
+                // not setting path bc this already gets the path from the playlist file. they will always be equal.
+                // not setting length bc i dont think songs change in length often enough to warrant it
+                println!("{}", "Done: Edited m3u track")
+            } else {
+                return Err("Index out of bounds".into());
+            }
+        }
+    }
     Ok(())
 }
 
-pub fn move_m3u_track(
-    app: &mut TemplateApp,
-    file_path: &str,
-    from: usize,
-    to: usize,
-) -> std::io::Result<()> {
+pub fn move_m3u_track(file_path: &str, from: usize, to: usize) -> std::io::Result<()> {
     // todo: make this function return an error if it has an error
     let mut playlist = read_m3u(file_path).unwrap(); // todo: check for valid result from read_m3u
 
+    if playlist.entries.len() <= from {
+        eprintln!("move_m3u_track index out of bounds error | from: {} | len: {}",from, playlist.entries.len());
+        return Err(Error::new(std::io::ErrorKind::Other, format!("move_m3u_track index out of bounds error | from: {} | len: {}",from, playlist.entries.len())));
+    }
     let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
     let insert_at = if from < to { to - 1 } else { to };
 
@@ -324,10 +352,10 @@ pub fn move_m3u_track(
     i guess it's not really a big deal cus this shouldn't ever trigger.. but: todo: fix this error check */
 
     playlist.entries.insert(insert_at, entry);
-    let song_card = app.songs.articles.remove(from);
-    app.songs.articles.insert(insert_at, song_card);
 
-    let _ = write_m3u(file_path, &playlist, true, false, true);
+    if let Err(e) = write_m3u(file_path, &playlist, true, false, true) {
+        println!("move_m3u_track write_m3u error: {}", e);
+    }
 
     Ok(())
 }
@@ -422,39 +450,54 @@ pub fn reset_playlist_ids(app: &mut TemplateApp) {
         let count62 = to_base62(count, 4); // 14 million playlists gotta be enough.
         playlist.set_file_name(format!("{:04}{}", count62, clean_name));
         app.playlists[count] = playlist.clone(); // this should probably be on a different thread, since a huge amount of playlists will cause a freeze bc disk operations
-        let _ = &playlist.set_extension("m3utmp");
-        if playlist.file_name()
-            != app
-                .currently_selected_playlist_name
-                .as_ref()
-                .map(std::ffi::OsStr::new)
-        /*  this check is useless if .file_name returns the extension aswell.
-        meant to be a bit of an optimization, so that we do not rename playlists that aren't being rearranged.
-        though, i'm not sure if it's working right. i do not think it is, actually! */
-        {
-            if let Err(error) = fs::rename(&old_path, &playlist) {
-                show_error(
-                    app,
-                    format!(
-                        "err: {} | from: {} | to: {}",
+        if playlist.set_extension("m3utmp") {
+            if playlist.file_name()
+                != app
+                    .currently_selected_playlist_name
+                    .as_ref()
+                    .map(std::ffi::OsStr::new)
+            /*  this check is useless if .file_name returns the extension aswell.
+            meant to be a bit of an optimization, so that we do not rename playlists that aren't being rearranged.
+            though, i'm not sure if it's working right. i do not think it is, actually! */
+            {
+                if let Err(error) = fs::rename(&old_path, &playlist) {
+                    show_error(
+                        app,
+                        format!(
+                            "err: {} | from: {} | to: {}",
+                            error.to_string(),
+                            path_to_string(&old_path),
+                            path_to_string(&playlist),
+                        ),
+                    );
+                    eprintln!(
+                        "reset_playlist_ids: err: {} | from: {} | to: {}",
                         error.to_string(),
                         path_to_string(&old_path),
                         path_to_string(&playlist),
-                    ),
-                );
+                    );
+                }
+                if selected {
+                    playlist.set_extension("m3u");
+                    app.currently_selected_playlist_path = playlist;
+                    //show_error(self, "Meow! Selected moved.".to_string());
+                }
             }
-            if selected {
-                playlist.set_extension("m3u");
-                app.currently_selected_playlist_path = playlist;
-                //show_error(self, "Meow! Selected moved.".to_string());
-            }
+        } else {
+            let err = "reset_playlist_ids set_extension error 1: m3utmp".to_string();
+            show_error(app, err.clone());
+            eprintln!("{}", err);
         }
         count += 1;
     }
     for mut playlist in app.playlists.clone() {
         let mut old_path = playlist.clone();
         old_path.set_extension("m3utmp");
-        let _ = &playlist.set_extension("m3u");
+        if !&playlist.set_extension("m3u") {
+            let err = "reset_playlist_ids set_extension error 2: m3u".to_string();
+            show_error(app, err.clone());
+            eprintln!("{}", err);
+        }
         if let Err(error) = fs::rename(&old_path, &playlist) {
             show_error(
                 app,

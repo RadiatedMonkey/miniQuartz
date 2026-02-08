@@ -1,11 +1,9 @@
-use std::path::PathBuf;
-
 use egui::{Context, Ui, Id};
 
 use crate::TemplateApp;
-use crate::playlist::{SongCardData, add_to_playlist, move_m3u_track, remove_from_playlist};
+use crate::playlist::SongCardData;
 use crate::utilities::{path_to_string, path_to_string_name, show_error};
-use crate::app::load_metadata_if_needed;
+use crate::app::{AddTrack, M3uEditTask, RemoveTrack, load_metadata_if_needed};
 use crate::playlist::{get_playlists,reset_playlist_ids};
 
 /// UI ///
@@ -34,9 +32,14 @@ pub fn right_click_song_card(
             let playlist_name = &path_to_string_name(playlist)[4..];
             let playlist_path = path_to_string(&playlist.to_path_buf());
             if ui.button(playlist_name).clicked() {
-                let _ = add_to_playlist(&playlist_path, &song_data);
+                if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack{
+                    file_path: playlist_path.clone(),
+                    new_song: song_data.clone(),
+                })){
+                    eprintln!("Failed to queue M3uEditTask: {}", e);
+                }
                 if Some(playlist_path) == app.currently_selected_playlist_name {
-                    app.songs.articles.push(song_data.clone()); // wish this could be in the add_to_playlist function but couldn't get it to play nice. skill issue
+                    app.songs.articles.push(song_data.clone());
                 }
                 if Some(playlist_name) == app.currently_selected_playlist_name.as_deref() {
                     app.songs.articles.extend([song_data.clone()]);
@@ -49,15 +52,14 @@ pub fn right_click_song_card(
         let playlist_path = path_to_string(
             &app.currently_selected_playlist_path.to_path_buf(),
         );
-        let _ = remove_from_playlist(&playlist_path, index);
-        if let Some(index) = app.songs.articles.iter().position(|x| x == &song_data) {
-            app.songs.articles[index].display = false;
+        if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack{
+            file_path: playlist_path,
+            index_to_remove: index,
+        })){
+            show_error(app,format!("Failed to add removal to queue: {}", e));
+            eprintln!("Failed to add removal to queue: {}", e);
         }
-    }
-    if ui.button("Move up").clicked(){
-        if let Err(e) = move_m3u_track(app, &path_to_string(&app.currently_selected_playlist_path), index, index-1){
-            show_error(app, e.to_string());
-        }
+        app.songs.articles.remove(index);
     }
 }
 
@@ -96,6 +98,7 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui){
                     if app.playlist_to_delete.is_some(){
                         if let Err(e) = std::fs::remove_file(app.playlist_to_delete.as_ref().unwrap()){
                             show_error(app, format!("Failed to delete file: {}",e.to_string()));
+                            println!("delete_playlist_warning: {}",e);
                         }
                         app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get because one is now deleted & reset_playlist_ids wont like that
                         reset_playlist_ids(app);
@@ -140,6 +143,7 @@ pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui){
                             if &new_path != old_path{
                                 if new_path.try_exists().unwrap_or(false){
                                     show_error(app,format!("Playlist already exists! If you're seeing this, something went very wrong (✿uwu)\nold path: {} \nnew path: {}",path_to_string(old_path),path_to_string(&new_path)));
+                                    eprintln!("{}","Playlist already exists?".to_string());
                                 }else{
                                     if let Err(error) = std::fs::rename(app.playlist_to_rename.as_ref().unwrap(), &new_path) {
                                         show_error(
@@ -148,9 +152,13 @@ pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui){
                                                 "rename playlist err: {} | from: {} | to: {}",
                                                 error.to_string(),
                                                 path_to_string(&app.playlist_to_rename.as_ref().unwrap()),
-                                                text,
+                                                text
                                             ),
                                         );
+                                        eprintln!("rename_playlist std::fs::rename err: {} | from: {} | to: {}",
+                                                error.to_string(),
+                                                path_to_string(&app.playlist_to_rename.as_ref().unwrap()),
+                                                text)
                                     }
                                     app.playlists = get_playlists("./playlists/").unwrap_or_default();
                                     if set_current{
@@ -170,10 +178,15 @@ pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui){
 }
 
 pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usize) -> (bool, Option<usize>){
+    if app.songs.articles.len() <= i{
+        eprintln!("draw_song_card: Index out of range error");
+        return(false, None);
+    } /* this triggering when removing a song from a playlist is normal, since when you delete a song
+         it removes an item from app.songs.articles before the for loop drawing the cards is finished. 
+         not sure if there's a better way to handle it, but this feels Just Okay. */
     let song = &mut app.songs.articles[i];
     let mut clicked = false;
     let mut move_to = None;
-    // let title = song.title.clone();
     if !song.display { return (false, None)}
 
     load_metadata_if_needed(song, app.metadata_sender.clone());
