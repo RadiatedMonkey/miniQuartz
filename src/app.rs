@@ -146,7 +146,7 @@ impl Default for TemplateApp {
                     task.cover,
                     task.title,
                 );
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                //std::thread::sleep(std::time::Duration::from_millis(100));
             }
         });
 
@@ -265,7 +265,7 @@ pub struct Metadata {
     cover_path: String,
 }
 
-struct M3uEditTask {
+pub struct M3uEditTask {
     path: String,
     index: usize,
     album: String,
@@ -825,7 +825,7 @@ impl eframe::App for TemplateApp {
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
 
-                        for result in self.metadata_receiver.try_iter().take(1) {
+                        for result in self.metadata_receiver.try_iter() {
                             for (index, song) in self
                                 .songs
                                 .articles
@@ -837,11 +837,10 @@ impl eframe::App for TemplateApp {
                                 song.artist = result.data.artist.clone();
                                 if !result.data.title.is_empty() {
                                     song.title = result.data.title.clone();
+                                } else {
+                                    song.title = path_to_string_name(&song.path);
                                 }
                                 song.cover_path = result.data.cover_path.clone();
-                                let playlist_path = path_to_string(
-                                    &self.currently_selected_playlist_path.to_path_buf(),
-                                );
                                 let _ = self
                                     .m3u_sender
                                     .send(M3uEditTask {
@@ -926,11 +925,11 @@ impl eframe::App for TemplateApp {
         });
         ctx.request_repaint_after(std::time::Duration::from_millis(300)); // Updates UI every 300ms, so that the duration bar moves smoothly when tabbed out
 
-        egui::Window::new("Egui Settings").show(ctx, |ui| {
+        /*egui::Window::new("Egui Settings").show(ctx, |ui| {
             // todo: make this a settings page
             ScrollArea::vertical().show(ui, |ui| {
                 ctx.settings_ui(ui);
             });
-        });
+        });*/
     }
 }

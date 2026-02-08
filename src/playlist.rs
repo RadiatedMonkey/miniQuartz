@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Error, Write};
 use std::path::{Path, PathBuf};
 
 use crate::TemplateApp;
-use crate::utilities::{path_to_string,path_to_string_name,to_base62,show_error};
+use crate::utilities::{path_to_string, path_to_string_name, show_error, to_base62};
 
 /// PLAYLIST ///
 /// Song management & organization
@@ -283,19 +283,24 @@ pub fn edit_m3u_track(
     title: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut playlist = read_m3u(file_path)?;
-
-    if index < playlist.entries.len() {
-        playlist.entries[index].album = album;
-        playlist.entries[index].artist = artist;
-        playlist.entries[index].cover_path = cover_path;
-        playlist.entries[index].title = title;
-        // not setting path bc this already gets the path from the playlist file. they will always be equal.
-        // not setting length bc i dont think songs change in length often enough to warrant it
-    } else {
-        return Err("Index out of bounds".into());
+    let entry = &playlist.entries[index];
+    if entry.album != album
+        || entry.artist != artist
+        || entry.cover_path != cover_path
+        || entry.title != title
+    {
+        if index < playlist.entries.len() {
+            playlist.entries[index].album = album;
+            playlist.entries[index].artist = artist;
+            playlist.entries[index].cover_path = cover_path;
+            playlist.entries[index].title = title;
+            // not setting path bc this already gets the path from the playlist file. they will always be equal.
+            // not setting length bc i dont think songs change in length often enough to warrant it
+        } else {
+            return Err("Index out of bounds".into());
+        }
+        write_m3u(file_path, &playlist, true, false, true)?;
     }
-
-    write_m3u(file_path, &playlist, true, false, true)?;
 
     Ok(())
 }
