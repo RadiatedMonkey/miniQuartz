@@ -905,7 +905,7 @@ impl eframe::App for TemplateApp {
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
 
-                        for result in self.metadata_receiver.try_iter() {
+                        for result in self.metadata_receiver.try_iter().take(1) {
                             for (index, song) in self
                                 .songs
                                 .articles
@@ -921,7 +921,7 @@ impl eframe::App for TemplateApp {
                                     song.title = path_to_string_name(&song.path);
                                 }
                                 song.cover_path = result.data.cover_path.clone();
-                                /*if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
+                                if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
                                     path: path_to_string(
                                         &self.currently_selected_playlist_path.to_path_buf(),
                                     ),
@@ -932,7 +932,7 @@ impl eframe::App for TemplateApp {
                                     title: song.title.clone(),
                                 })) {
                                     eprintln!("Failed to add metadata to queue: {}", e);
-                                }*/
+                                }
                                 /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
                                 because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
                                 A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺
