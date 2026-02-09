@@ -33,7 +33,6 @@ impl Songs {
             Ok(entries) => entries,
             Err(_) => return Songs { articles: vec![] },
         };
-
         let iter = playlist_entries.into_iter().map(|entry| {
             let display_title = if entry.title.is_empty() {
                 Path::new(&entry.path)

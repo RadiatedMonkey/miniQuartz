@@ -141,7 +141,7 @@ impl Default for TemplateApp {
             while let Ok(task) = receiver_m3u.recv() {
                 match task {
                     M3uEditTask::Edit(data) => {
-                        //println!("{}", "Queued: Edit m3u track");
+                        println!("{}", "Queued: Edit m3u track");
                         if let Err(e) = edit_m3u_track(
                             &data.path,
                             data.index,
@@ -431,7 +431,8 @@ pub fn load_metadata_if_needed(
         }) {
             println!("load_metadata_if_needed Metadata Request error: {}", e);
         }
-        song.metadata_loaded = true; // i think this isn't actually waiting to get metadata
+        println!("{}", "Sent metadata request");
+        song.metadata_loaded = true;
     }
 }
 
@@ -663,7 +664,7 @@ impl eframe::App for TemplateApp {
 
         //--(*￣3￣)╭----(*￣3￣)╭---(*￣3￣)╭----(*￣3￣)╭--//
         // Side panel to display playlists and app controls //
-
+        let song_card_jump_trigger_id = egui::Id::new("song_card_jump_trigger"); // used to scroll to top when switching playlists
         egui::SidePanel::left("playlists")
             .resizable(true)
             .min_width(30.0)
@@ -722,6 +723,7 @@ impl eframe::App for TemplateApp {
                                     Some(playlist_name.to_string());
                                 self.currently_selected_playlist_path =
                                     self.playlists[i].to_path_buf();
+                                ui.data_mut(|d| d.insert_temp(song_card_jump_trigger_id, true));
                             }
 
                             let rect = response.rect;
@@ -864,14 +866,25 @@ impl eframe::App for TemplateApp {
                 });
             egui::CentralPanel::default().show(ctx, |ui| {
                 // Nested panels don't usually behave well but it works so idk lol.
-                ScrollArea::vertical()
-                    //.max_width(available_width-5.0)
-                    .scroll_source(egui::containers::scroll_area::ScrollSource {
+
+                // jump to top when switching playlist stuff
+                let should_jump = ui.data_mut(|d| {
+                    d.remove_temp::<bool>(song_card_jump_trigger_id)
+                        .unwrap_or(false)
+                });
+                let mut scroll_area = ScrollArea::vertical().scroll_source(
+                    egui::containers::scroll_area::ScrollSource {
                         scroll_bar: true,
                         drag: false,
                         mouse_wheel: true,
-                    })
-                    .show(ui, |ui| {
+                    },
+                );
+
+                if should_jump {
+                    scroll_area = scroll_area.vertical_scroll_offset(0.0);
+                }
+
+                scroll_area.show(ui, |ui| {
                         // render buffer stuff
                         let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
                         let total_rows = self.songs.articles.len(); // it feels wrong to be setting this every frame. this only really needs to be set if the shown list changes.
@@ -892,7 +905,7 @@ impl eframe::App for TemplateApp {
                         let above_px = start as f32 * row_height;
                         ui.add_space(above_px); // makes scroll bar look big (1/2)
 
-                        for result in self.metadata_receiver.try_iter().take(1) {
+                        for result in self.metadata_receiver.try_iter() {
                             for (index, song) in self
                                 .songs
                                 .articles
@@ -908,7 +921,7 @@ impl eframe::App for TemplateApp {
                                     song.title = path_to_string_name(&song.path);
                                 }
                                 song.cover_path = result.data.cover_path.clone();
-                                if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
+                                /*if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
                                     path: path_to_string(
                                         &self.currently_selected_playlist_path.to_path_buf(),
                                     ),
@@ -919,7 +932,7 @@ impl eframe::App for TemplateApp {
                                     title: song.title.clone(),
                                 })) {
                                     eprintln!("Failed to add metadata to queue: {}", e);
-                                }
+                                }*/
                                 /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
                                 because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
                                 A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺

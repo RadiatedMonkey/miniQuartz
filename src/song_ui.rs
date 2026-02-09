@@ -187,7 +187,10 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
     let song = &mut app.songs.articles[i];
     let mut clicked = false;
     let mut move_to = None;
-    if !song.display { return (false, None)}
+    if !song.display {
+        println!("song display false; nothing rendered for {} - {}", song.title, song.artist);
+        return (false, None);
+    }
 
     load_metadata_if_needed(song, app.metadata_sender.clone());
     song.load_texture_if_needed(ctx);
