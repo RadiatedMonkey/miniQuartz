@@ -248,7 +248,9 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
             let parts: Vec<&str> = content.split('␟').collect(); // ␟ is the "Unit Separator" symbol, not the country code.
             if parts.len() != 5 {
                 println!(
-                    "Read m3u error: Malformed playlist file, track missing full #EXTINF. This file may be corrupted or incompatible with MiniQuartz"
+                    "Read m3u error: Malformed playlist file, track missing full #EXTINF. This file may be corrupted or incompatible with MiniQuartz\nlen: {}\nline: {}",
+                    parts.len(),
+                    line
                 ); // would be really nice if the user could see this error!
                 break;
             } else {
@@ -296,18 +298,24 @@ pub fn edit_m3u_track(
     } else {
         let entry = &playlist.entries[index];
         // albums are equaling true
-        if entry.album != album{
+        if entry.album != album {
             println!("ALBUM: entry: {}\nALBUM: actual: {}", entry.album, album)
         }
-        if entry.artist != artist{
-            println!("ARTIST: entry: {}\nARTIST: actual: {}", entry.artist, artist)
+        if entry.artist != artist {
+            println!(
+                "ARTIST: entry: {}\nARTIST: actual: {}",
+                entry.artist, artist
+            )
         }
-        if entry.title != title{
+        if entry.title != title {
             println!("TITLE: entry: {}\nTITLE: actual: {}", entry.title, title);
-            println!("{}",if(entry.title==title){true}else{false});
+            println!("{}", if (entry.title == title) { true } else { false });
         }
-        if entry.cover_path != cover_path{
-            println!("COVER: entry: {}\nCOVER: actual: {}", entry.cover_path, cover_path)
+        if entry.cover_path != cover_path {
+            println!(
+                "COVER: entry: {}\nCOVER: actual: {}",
+                entry.cover_path, cover_path
+            )
         }
 
         if entry.album != album
@@ -338,8 +346,19 @@ pub fn move_m3u_track(file_path: &str, from: usize, to: usize) -> std::io::Resul
     let mut playlist = read_m3u(file_path).unwrap(); // todo: check for valid result from read_m3u
 
     if playlist.entries.len() <= from {
-        eprintln!("move_m3u_track index out of bounds error | from: {} | len: {}",from, playlist.entries.len());
-        return Err(Error::new(std::io::ErrorKind::Other, format!("move_m3u_track index out of bounds error | from: {} | len: {}",from, playlist.entries.len())));
+        eprintln!(
+            "move_m3u_track index out of bounds error | from: {} | len: {}",
+            from,
+            playlist.entries.len()
+        );
+        return Err(Error::new(
+            std::io::ErrorKind::Other,
+            format!(
+                "move_m3u_track index out of bounds error | from: {} | len: {}",
+                from,
+                playlist.entries.len()
+            ),
+        ));
     }
     let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
     let insert_at = if from < to { to - 1 } else { to };
