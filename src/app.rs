@@ -1,13 +1,8 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
 use egui::{Id, Modal, ScrollArea};
-use gstreamer::glib::ffi::GList;
-use gstreamer::glib::translate::FromGlibContainerAsVec;
-use gstreamer::glib::translate::ToGlibPtr;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
-use gstreamer_pbutils::ffi::gst_discoverer_container_info_get_streams;
-use gstreamer_pbutils::ffi::gst_discoverer_stream_info_list_free;
 use gstreamer_pbutils::prelude::DiscovererStreamInfoExt;
 use image::imageops::FilterType;
 use serde::Deserialize;
