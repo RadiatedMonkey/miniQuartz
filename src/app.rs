@@ -1,8 +1,14 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
 use egui::{Id, Modal, ScrollArea};
+use gstreamer::glib::ffi::GList;
+use gstreamer::glib::translate::FromGlibContainerAsVec;
+use gstreamer::glib::translate::ToGlibPtr;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
+use gstreamer_pbutils::ffi::gst_discoverer_container_info_get_streams;
+use gstreamer_pbutils::ffi::gst_discoverer_stream_info_list_free;
+use gstreamer_pbutils::prelude::DiscovererStreamInfoExt;
 use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
@@ -330,8 +336,9 @@ pub fn get_metadata(
 ) -> Result<Metadata, anyhow::Error> {
     let uri = path_to_uri(path);
     let info = discoverer.discover_uri(&uri)?;
+    let info2 = info.stream_info();
 
-    let tags = info.tags();
+    let tags = info2.unwrap().tags();
 
     let title = tags
         .as_ref()
@@ -364,12 +371,19 @@ pub fn get_metadata(
             Some(map.as_slice().to_vec())
         });
 
+    let length = tags
+        .as_ref()
+        .and_then(|t| t.get::<tags::Duration>())
+        .map(|t| t.get().to_string());
+    println!("penis {:?}", length);
+
     let mut hasher = DefaultHasher::new();
     if album != "Unknown Album" && artist != "Unknown Artist" {
         format!("{}{}", album, artist).hash(&mut hasher); // this is like this so that we don't cache multiple of the same cover
     } else {
         uri.hash(&mut hasher);
     }
+
     let unique_id = hasher.finish();
     let output_path_str = format!("cache/cover_{}.jpg", unique_id);
     let output_path = PathBuf::from(output_path_str.clone());
@@ -403,7 +417,6 @@ pub fn get_metadata(
             cover_path: output_path_str,
         });
     }
-
     Ok(Metadata {
         title,
         artist,
@@ -885,121 +898,121 @@ impl eframe::App for TemplateApp {
                 }
 
                 scroll_area.show(ui, |ui| {
-                        // render buffer stuff
-                        let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
-                        let total_rows = self.songs.articles.len(); // it feels wrong to be setting this every frame. this only really needs to be set if the shown list changes.
+                    // render buffer stuff
+                    let row_height = self.row_height.unwrap_or(30.0); // proper row height: it feels wrong to be setting this every frame.
+                    let total_rows = self.songs.articles.len(); // it feels wrong to be setting this every frame. this only really needs to be set if the shown list changes.
 
-                        let clip_rect = ui.clip_rect();
-                        let top = clip_rect.top();
-                        let bottom = clip_rect.bottom();
+                    let clip_rect = ui.clip_rect();
+                    let top = clip_rect.top();
+                    let bottom = clip_rect.bottom();
 
-                        let mut start = ((top - ui.min_rect().top()) / row_height).floor() as usize;
-                        let mut end = ((bottom - ui.min_rect().top()) / row_height).ceil() as usize;
+                    let mut start = ((top - ui.min_rect().top()) / row_height).floor() as usize;
+                    let mut end = ((bottom - ui.min_rect().top()) / row_height).ceil() as usize;
 
-                        let render_buffer_size = 6;
-                        // If slow-med scrolling causes metadata not to load, increase this.
+                    let render_buffer_size = 6;
+                    // If slow-med scrolling causes metadata not to load, increase this.
 
-                        start = start.saturating_sub(render_buffer_size);
-                        end = (end + render_buffer_size).min(total_rows);
+                    start = start.saturating_sub(render_buffer_size);
+                    end = (end + render_buffer_size).min(total_rows);
 
-                        let above_px = start as f32 * row_height;
-                        ui.add_space(above_px); // makes scroll bar look big (1/2)
+                    let above_px = start as f32 * row_height;
+                    ui.add_space(above_px); // makes scroll bar look big (1/2)
 
-                        for result in self.metadata_receiver.try_iter().take(1) {
-                            for (index, song) in self
-                                .songs
-                                .articles
-                                .iter_mut()
-                                .enumerate()
-                                .filter(|(_, s)| s.path == result.path)
-                            {
-                                song.album = result.data.album.clone();
-                                song.artist = result.data.artist.clone();
-                                if !result.data.title.is_empty() {
-                                    song.title = result.data.title.clone();
-                                } else {
-                                    song.title = path_to_string_name(&song.path);
-                                }
-                                song.cover_path = result.data.cover_path.clone();
-                                if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
-                                    path: path_to_string(
-                                        &self.currently_selected_playlist_path.to_path_buf(),
+                    for result in self.metadata_receiver.try_iter().take(1) {
+                        for (index, song) in self
+                            .songs
+                            .articles
+                            .iter_mut()
+                            .enumerate()
+                            .filter(|(_, s)| s.path == result.path)
+                        {
+                            song.album = result.data.album.clone();
+                            song.artist = result.data.artist.clone();
+                            if !result.data.title.is_empty() {
+                                song.title = result.data.title.clone();
+                            } else {
+                                song.title = path_to_string_name(&song.path);
+                            }
+                            song.cover_path = result.data.cover_path.clone();
+                            if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
+                                path: path_to_string(
+                                    &self.currently_selected_playlist_path.to_path_buf(),
+                                ),
+                                index,
+                                album: song.album.clone(),
+                                artist: song.artist.clone(),
+                                cover: song.cover_path.clone(),
+                                title: song.title.clone(),
+                            })) {
+                                eprintln!("Failed to add metadata to queue: {}", e);
+                            }
+                            /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
+                            because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
+                            A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺
+                            Really though I think it should be possible to pass a vec of M3uEditTask's and have the thread
+                            go through every item in the vec. */
+                        }
+                    }
+                    // / //                 // / //
+                    // / displaying song cards / //
+                    // / //                 // / //
+                    for i in start..end {
+                        //let song = &mut self.songs.articles[i];
+                        let (clicked, move_to) = draw_song_card(self, ctx, ui, i);
+                        if clicked {
+                            let song: &SongCardData = &self.songs.articles[i];
+                            let path = song.path.clone();
+
+                            self.now_playing = Some(path.clone());
+                            self.now_playing_song = Some(song.clone());
+
+                            play_song(self, path);
+                        }
+                        if let Some(target_idx) = move_to {
+                            if let Some(source_idx) = self.dragged_song_index {
+                                self.swap_request = Some((source_idx, target_idx));
+                            }
+                        }
+                    }
+                    if let Some(dragged_idx) = self.dragged_song_index {
+                        if let Some(song) = self.songs.articles.get(dragged_idx) {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                            egui::Tooltip::always_open(
+                                ui.ctx().clone(),
+                                ui.layer_id(),
+                                egui::Id::new("playlist_drag_tooltip"),
+                                egui::Pos2::ZERO,
+                            )
+                            .at_pointer()
+                            .show(|ui| {
+                                ui.set_max_width(300.0);
+                                ui.add(
+                                    egui::Label::new(song.title.clone())
+                                        .wrap_mode(egui::TextWrapMode::Wrap),
+                                );
+                            });
+                        }
+                    }
+                    if ui.input(|i| i.pointer.any_released()) {
+                        if let Some((from, to)) = self.swap_request {
+                            self.m3u_sender
+                                .send(M3uEditTask::Move(MoveTrack {
+                                    file_path: path_to_string(
+                                        &self.currently_selected_playlist_path,
                                     ),
-                                    index,
-                                    album: song.album.clone(),
-                                    artist: song.artist.clone(),
-                                    cover: song.cover_path.clone(),
-                                    title: song.title.clone(),
-                                })) {
-                                    eprintln!("Failed to add metadata to queue: {}", e);
-                                }
-                                /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
-                                because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
-                                A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺
-                                Really though I think it should be possible to pass a vec of M3uEditTask's and have the thread
-                                go through every item in the vec. */
-                            }
+                                    from,
+                                    to,
+                                }))
+                                .unwrap();
+                            let song_card = self.songs.articles.remove(from);
+                            let insert_at = if from < to { to - 1 } else { to };
+                            self.songs.articles.insert(insert_at, song_card);
+                            self.swap_request = None;
                         }
-                        // / //                 // / //
-                        // / displaying song cards / //
-                        // / //                 // / //
-                        for i in start..end {
-                            //let song = &mut self.songs.articles[i];
-                            let (clicked, move_to) = draw_song_card(self, ctx, ui, i);
-                            if clicked {
-                                let song: &SongCardData = &self.songs.articles[i];
-                                let path = song.path.clone();
-
-                                self.now_playing = Some(path.clone());
-                                self.now_playing_song = Some(song.clone());
-
-                                play_song(self, path);
-                            }
-                            if let Some(target_idx) = move_to {
-                                if let Some(source_idx) = self.dragged_song_index {
-                                    self.swap_request = Some((source_idx, target_idx));
-                                }
-                            }
-                        }
-                        if let Some(dragged_idx) = self.dragged_song_index {
-                            if let Some(song) = self.songs.articles.get(dragged_idx) {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-                                egui::Tooltip::always_open(
-                                    ui.ctx().clone(),
-                                    ui.layer_id(),
-                                    egui::Id::new("playlist_drag_tooltip"),
-                                    egui::Pos2::ZERO,
-                                )
-                                .at_pointer()
-                                .show(|ui| {
-                                    ui.set_max_width(300.0);
-                                    ui.add(
-                                        egui::Label::new(song.title.clone())
-                                            .wrap_mode(egui::TextWrapMode::Wrap),
-                                    );
-                                });
-                            }
-                        }
-                        if ui.input(|i| i.pointer.any_released()) {
-                            if let Some((from, to)) = self.swap_request {
-                                self.m3u_sender
-                                    .send(M3uEditTask::Move(MoveTrack {
-                                        file_path: path_to_string(
-                                            &self.currently_selected_playlist_path,
-                                        ),
-                                        from,
-                                        to,
-                                    }))
-                                    .unwrap();
-                                let song_card = self.songs.articles.remove(from);
-                                let insert_at = if from < to { to - 1 } else { to };
-                                self.songs.articles.insert(insert_at, song_card);
-                                self.swap_request = None;
-                            }
-                        }
-                        let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
-                        ui.add_space(remaining_px); // makes scroll bar look big (2/2)  <- part of render buffer
-                    });
+                    }
+                    let remaining_px = (total_rows - end) as f32 * row_height; //      <- part of render buffer
+                    ui.add_space(remaining_px); // makes scroll bar look big (2/2)  <- part of render buffer
+                });
             });
 
             /*ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
