@@ -208,8 +208,8 @@ impl Default for TemplateApp {
 
             now_playing_song: Some(SongCardData {
                 title: "".to_owned(),
-                artist: "none".to_owned(),         // todo: metadata
-                length_string: "--:--".to_owned(), // todo: parse
+                artist: "none".to_owned(),    // todo: metadata
+                length_string: "".to_owned(), // todo: parse
                 album: "none".to_owned(),
                 cover_path: "".to_owned(), //todo: metadata
                 path: std::path::PathBuf::from(""),
@@ -369,6 +369,7 @@ pub fn get_metadata(
         });
 
     let length = info.duration();
+    let length_usize = length.unwrap().mseconds() as usize;
     let length_secs = length.unwrap().seconds();
     let minutes = length_secs / 60;
     let seconds = length_secs % 60;

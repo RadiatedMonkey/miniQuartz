@@ -47,7 +47,7 @@ impl Songs {
                 title: display_title,
                 artist: entry.artist,
                 album: entry.album,
-                length_string: "--:--".to_owned(),
+                length_string: entry.length,
                 cover_path: entry.cover_path,
                 path: PathBuf::from(path),
                 texture: None,
@@ -173,7 +173,7 @@ pub fn remove_from_playlist(
 #[derive(Clone, PartialEq)]
 pub struct PlaylistEntry {
     pub path: String,
-    pub duration: i32, // -1 if unknown
+    pub length: String, // -1 if unknown
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -206,7 +206,7 @@ impl M3uPlaylist {
     pub fn add_track(
         &mut self,
         path: &str,
-        duration: i32,
+        length: i32,
         title: &str,
         artist: &str,
         cover_path: &str,
@@ -214,7 +214,7 @@ impl M3uPlaylist {
     ) {
         self.entries.push(PlaylistEntry {
             path: path.to_string(),
-            duration,
+            length: length.to_string(),
             title: title.to_string(),
             artist: artist.to_string(),
             cover_path: cover_path.to_string(),
@@ -229,7 +229,7 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
 
     let mut playlist = M3uPlaylist::new();
     // Temporary storage for metadata read from the previous line
-    let mut current_duration = -1;
+    let mut current_length = String::new();
     let mut current_title = String::new();
     let mut current_artist = String::new();
     let mut current_cover_path = String::new();
@@ -254,7 +254,7 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
                 ); // would be really nice if the user could see this error!
                 break;
             } else {
-                current_duration = parts[0].parse().unwrap_or(-1);
+                current_length = parts[0].trim().to_string();
                 current_title = parts[1].trim().to_string();
                 current_artist = parts[2].trim().to_string();
                 current_cover_path = parts[3].trim().to_string();
@@ -265,7 +265,7 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
         } else {
             playlist.entries.push(PlaylistEntry {
                 path: trimmed.to_string(),
-                duration: current_duration,
+                length: current_length.clone(),
                 title: current_title.clone(),
                 artist: current_artist.clone(),
                 cover_path: current_cover_path.clone(),
@@ -273,7 +273,7 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
             });
 
             // Reset metadata for next entry : is this necessary?
-            current_duration = -1;
+            current_length.clear();
             current_title.clear();
             current_artist.clear();
             current_cover_path.clear();
@@ -401,11 +401,11 @@ pub fn write_m3u<P: AsRef<Path>>(
 
     for entry in &playlist.entries {
         // Only write metadata if requested AND if useful data exists
-        if !entry.title.is_empty() || entry.duration != -1 {
-            let dur = if entry.duration == -1 {
-                0
+        if !entry.title.is_empty() || !entry.length.is_empty() {
+            let dur = if entry.length.is_empty() {
+                "--:--"
             } else {
-                entry.duration
+                &entry.length
             };
             let title = if entry.title.is_empty() {
                 "Unknown Title"
