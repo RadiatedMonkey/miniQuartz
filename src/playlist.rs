@@ -402,7 +402,7 @@ pub fn write_m3u<P: AsRef<Path>>(
     for entry in &playlist.entries {
         // Only write metadata if requested AND if useful data exists
         if !entry.title.is_empty() || !entry.length.is_empty() {
-            let dur = if entry.length.is_empty() {
+            let length = if entry.length.is_empty() {
                 "--:--"
             } else {
                 &entry.length
@@ -431,8 +431,8 @@ pub fn write_m3u<P: AsRef<Path>>(
             // Format: #EXTINF:seconds,Title
             writeln!(
                 file,
-                "#EXTINF:{}␟{}␟{}␟{}␟{}",
-                dur, title, artist, cover_path, album
+                "␟{}␟{}␟{}␟{}␟{}",
+                length, title, artist, cover_path, album
             )?;
         }
         // Write the actual file path
