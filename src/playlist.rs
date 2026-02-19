@@ -140,7 +140,7 @@ pub fn add_to_playlist(
 
     playlist.add_track(
         &format!("{}", path_to_string(&new_song.path)),
-        -1,
+        &new_song.length_string,
         &new_song.title,
         &new_song.artist,
         &format!("{}", new_song.cover_path),
@@ -206,7 +206,7 @@ impl M3uPlaylist {
     pub fn add_track(
         &mut self,
         path: &str,
-        length: i32,
+        length: &str,
         title: &str,
         artist: &str,
         cover_path: &str,
@@ -431,7 +431,7 @@ pub fn write_m3u<P: AsRef<Path>>(
             // Format: #EXTINF:seconds,Title
             writeln!(
                 file,
-                "␟{}␟{}␟{}␟{}␟{}",
+                "#EXTINF:␟{}␟{}␟{}␟{}␟{}",
                 length, title, artist, cover_path, album
             )?;
         }
