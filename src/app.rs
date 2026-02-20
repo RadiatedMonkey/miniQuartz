@@ -245,7 +245,9 @@ impl Default for TemplateApp {
                     }
                 }
                 //println!("{}",need_write);
-                if (time_since_task_added.elapsed() >= std::time::Duration::new(1, 0) && need_write) || urgent {
+                if (time_since_task_added.elapsed() >= std::time::Duration::new(1, 0) && need_write)
+                    || urgent
+                {
                     println!("Write here!");
                     need_write = false;
                     urgent = false;
@@ -427,9 +429,8 @@ pub fn get_metadata(
     */
     let uri = path_to_uri(path);
     let info = discoverer.discover_uri(&uri)?;
-    let info2 = info.stream_info();
 
-    let tags = info2.unwrap().tags();
+    let tags = info.tags();
 
     let title = tags
         .as_ref()
@@ -1018,7 +1019,7 @@ impl eframe::App for TemplateApp {
                             .iter_mut()
                             .enumerate()
                             .filter(|(_, s)| s.path == result.path)
-                            .take(1)
+                        //.take(1)
                         {
                             song.album = result.data.album.clone();
                             song.artist = result.data.artist.clone();
