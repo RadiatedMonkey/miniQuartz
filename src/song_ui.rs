@@ -1,23 +1,23 @@
-use egui::{Context, Ui, Id};
+use egui::{Context, Id, Ui};
 
 use crate::TemplateApp;
-use crate::playlist::SongCardData;
-use crate::utilities::{path_to_string, path_to_string_name, show_error};
 use crate::app::{AddTrack, M3uEditTask, RemoveTrack, load_metadata_if_needed};
-use crate::playlist::{get_playlists,reset_playlist_ids};
+use crate::playlist::SongCardData;
+use crate::playlist::{get_playlists, reset_playlist_ids};
+use crate::utilities::{path_to_string, path_to_string_name, show_error};
 
 /// UI ///
 /// Drawing functions
-/// 
+///
 
 pub fn draw_drop_bar(ui: &mut egui::Ui, start: egui::Pos2, end: egui::Pos2) {
     // This should be in a different UI file, since this UI file is meant to be juist for songs.
-            let color = ui.visuals().selection.bg_fill;
-            let stroke = egui::Stroke::new(2.0, color);
-            ui.painter().line_segment([start, end], stroke);
-            ui.painter().circle_filled(start, 3.0, stroke.color);
-            ui.painter().circle_filled(end, 3.0, stroke.color);
-        }
+    let color = ui.visuals().selection.bg_fill;
+    let stroke = egui::Stroke::new(2.0, color);
+    ui.painter().line_segment([start, end], stroke);
+    ui.painter().circle_filled(start, 3.0, stroke.color);
+    ui.painter().circle_filled(end, 3.0, stroke.color);
+}
 
 pub fn right_click_song_card(
     app: &mut TemplateApp,
@@ -32,10 +32,10 @@ pub fn right_click_song_card(
             let playlist_name = &path_to_string_name(playlist)[4..];
             let playlist_path = path_to_string(&playlist.to_path_buf());
             if ui.button(playlist_name).clicked() {
-                if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack{
+                if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack {
                     file_path: playlist_path.clone(),
                     new_song: song_data.clone(),
-                })){
+                })) {
                     eprintln!("Failed to queue M3uEditTask: {}", e);
                 }
                 if Some(playlist_path) == app.currently_selected_playlist_name {
@@ -49,40 +49,34 @@ pub fn right_click_song_card(
         let _ = ui.button("todo - New Playlist & Playlist Folders");
     });
     if ui.button("Remove from playlist").clicked() {
-        let playlist_path = path_to_string(
-            &app.currently_selected_playlist_path.to_path_buf(),
-        );
-        if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack{
+        let playlist_path = path_to_string(&app.currently_selected_playlist_path.to_path_buf());
+        if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack {
             file_path: playlist_path,
             index_to_remove: index,
-        })){
-            show_error(app,format!("Failed to add removal to queue: {}", e));
+        })) {
+            show_error(app, format!("Failed to add removal to queue: {}", e));
             eprintln!("Failed to add removal to queue: {}", e);
         }
         app.songs.articles.remove(index);
     }
 }
 
-pub fn right_click_playlist(
-    app: &mut TemplateApp,
-    ui: &mut egui::Ui,
-    playlist_index: usize,
-) {
+pub fn right_click_playlist(app: &mut TemplateApp, ui: &mut egui::Ui, playlist_index: usize) {
     ui.set_max_width(200.0);
     let playlist = &app.playlists[playlist_index];
     if ui.button("Rename playlist").clicked() {
         app.rename_playlist_show = true;
         app.playlist_to_rename = Some(playlist.to_path_buf());
         let name = &path_to_string_name(playlist)[4..];
-        app.rename_to = name[..name.len()-4].to_string();
+        app.rename_to = name[..name.len() - 4].to_string();
     }
-    if ui.button("Delete playlist").clicked(){
+    if ui.button("Delete playlist").clicked() {
         app.warning_show = true;
         app.playlist_to_delete = Some(playlist.to_path_buf());
     }
 }
 
-pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui){
+pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
     egui::Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
         ui.set_width(200.0);
         ui.heading("Delete playlist?");
@@ -117,7 +111,7 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui){
     });
 }
 
-pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui){
+pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui) {
     egui::Modal::new(Id::new("Playlist options")).show(ui.ctx(), |ui| {
         ui.set_width(200.0);
         ui.heading("Rename playlist");
@@ -177,18 +171,26 @@ pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui){
     });
 }
 
-pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usize) -> (bool, Option<usize>){
-    if app.songs.articles.len() <= i{
+pub fn draw_song_card(
+    app: &mut TemplateApp,
+    ctx: &Context,
+    ui: &mut Ui,
+    i: usize,
+) -> (bool, Option<usize>) {
+    if app.songs.articles.len() <= i {
         eprintln!("draw_song_card: Index out of range error");
-        return(false, None);
+        return (false, None);
     } /* this triggering when removing a song from a playlist is normal, since when you delete a song
-         it removes an item from app.songs.articles before the for loop drawing the cards is finished. 
-         not sure if there's a better way to handle it, but this feels Just Okay. */
+    it removes an item from app.songs.articles before the for loop drawing the cards is finished.
+    not sure if there's a better way to handle it, but this feels Just Okay. */
     let song = &mut app.songs.articles[i];
     let mut clicked = false;
     let mut move_to = None;
     if !song.display {
-        println!("song display false; nothing rendered for {} - {}", song.title, song.artist);
+        println!(
+            "song display false; nothing rendered for {} - {}",
+            song.title, song.artist
+        );
         return (false, None);
     }
 
@@ -228,7 +230,7 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
                     app.dragged_song_index = Some(i);
                 }
             }
-            
+
             if let Some(from_idx) = app.dragged_song_index {
                 if response.contains_pointer() && from_idx != i {
                     let rect = response.rect;
@@ -271,7 +273,7 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
                             } else {
                                 ui.add(
                                     egui::Spinner::new()
-                                        .size(30.0) 
+                                        .size(30.0)
                                         .color(egui::Color32::BLUE),
                                         /* for some reason the spinner is slightly larger than the image, despite being 30.0?
                                             it might have some sort of padding, but im not sure how to change that. */
@@ -328,7 +330,7 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
                                 ui.add_space(10.0);
                                 ui.label(format!(
                                     "{}",
-                                    &song.length
+                                    &song.length_string
                                 ));
                                 //ui.label(path_to_string(&song.path));
                             },
@@ -348,16 +350,12 @@ pub fn draw_song_card(app: &mut TemplateApp, ctx: &Context, ui: &mut Ui, i: usiz
 
     if app.now_playing == Some(song.path.clone()) {
         // todo: this check should be based on file *and* playlist!
-        ui.painter().rect_filled(
-            response.rect,
-            4.0,
-            egui::Color32::from_white_alpha(10),
-        );
+        ui.painter()
+            .rect_filled(response.rect, 4.0, egui::Color32::from_white_alpha(10));
     }
     let song_send = song.clone();
     app.apply_options(
-        egui::Popup::context_menu(&response)
-            .id(Id::new(format!("context_menu{}", i))),
+        egui::Popup::context_menu(&response).id(Id::new(format!("context_menu{}", i))),
     )
     .show(|ui| right_click_song_card(app, ui, song_send, i));
 
