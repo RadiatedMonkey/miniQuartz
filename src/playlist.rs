@@ -390,7 +390,7 @@ pub fn write_m3u<P: AsRef<Path>>(
             // Format: #EXTINF:seconds,Title
             writeln!(
                 file,
-                "#EXTINF:␟{}␟{}␟{}␟{}␟{}",
+                "#EXTINF:{}␟{}␟{}␟{}␟{}",
                 length, title, artist, cover_path, album
             )?;
         }
