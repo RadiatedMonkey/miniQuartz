@@ -133,11 +133,9 @@ pub fn get_playlists(path: &str) -> std::io::Result<Vec<PathBuf>> {
 }
 
 pub fn add_to_playlist(
-    file_path: &str,
+    playlist: &mut M3uPlaylist,
     new_song: &SongCardData,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut playlist = M3uPlaylist::new();
-
+) -> Result<(), Box<dyn std::error::Error>> { // todo: doesn't need to return error if there is nothing that can have an error here.
     playlist.add_track(
         &format!("{}", path_to_string(&new_song.path)),
         -1,
@@ -147,25 +145,18 @@ pub fn add_to_playlist(
         &new_song.album,
     );
 
-    if let Err(e) = write_m3u(file_path, &playlist, false, true, false) {
-        println!("add_to_playlist write_m3u error: {}", e);
-    }
     Ok(())
 }
 
 pub fn remove_from_playlist(
-    file_path: &str,
+    playlist: &mut M3uPlaylist,
     index_to_remove: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut playlist = read_m3u(file_path)?;
-
+) -> Result<(), Box<dyn std::error::Error>> { // todo: doesn't need to return error if there is nothing that can have an error here.
     if index_to_remove < playlist.entries.len() {
         playlist.entries.remove(index_to_remove);
     } else {
         return Err("Index out of bounds".into());
     }
-
-    write_m3u(file_path, &playlist, true, false, true)?;
 
     Ok(())
 }
@@ -180,9 +171,10 @@ pub struct PlaylistEntry {
     pub cover_path: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct M3uPlaylist {
     pub entries: Vec<PlaylistEntry>,
+    pub path: String,
     pub texture: Option<egui::TextureHandle>,
 }
 
@@ -199,6 +191,7 @@ impl M3uPlaylist {
     pub fn new() -> Self {
         M3uPlaylist {
             entries: Vec::new(),
+            path: "".to_string(),
             texture: None,
         }
     }
@@ -285,66 +278,36 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
 }
 
 pub fn edit_m3u_track(
-    file_path: &str,
+    playlist: &mut M3uPlaylist,
     index: usize,
     album: String,
     artist: String,
     cover_path: String,
     title: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut playlist = read_m3u(file_path)?;
-    if playlist.entries.len() < index {
-        println!("{}", "edit_m3u_track: Index out of bounds for m3u file");
-    } else {
-        let entry = &playlist.entries[index];
-        // albums are equaling true
-        if entry.album != album {
-            println!("ALBUM: entry: {}\nALBUM: actual: {}", entry.album, album)
-        }
-        if entry.artist != artist {
-            println!(
-                "ARTIST: entry: {}\nARTIST: actual: {}",
-                entry.artist, artist
-            )
-        }
-        if entry.title != title {
-            println!("TITLE: entry: {}\nTITLE: actual: {}", entry.title, title);
-            println!("{}", if (entry.title == title) { true } else { false });
-        }
-        if entry.cover_path != cover_path {
-            println!(
-                "COVER: entry: {}\nCOVER: actual: {}",
-                entry.cover_path, cover_path
-            )
-        }
 
-        if entry.album != album
+    if let Some(entry) = playlist.entries.get_mut(index) {
+        let changed = entry.album != album
             || entry.artist != artist
             || entry.cover_path != cover_path
-            || entry.title != title
-        {
-            if index < playlist.entries.len() {
-                playlist.entries[index].album = album;
-                playlist.entries[index].artist = artist;
-                playlist.entries[index].cover_path = cover_path;
-                playlist.entries[index].title = title;
-                write_m3u(file_path, &playlist, true, false, true)?;
-                //println!("{}","Done: Edited m3u track")
-                // not setting path bc this already gets the path from the playlist file. they will always be equal.
-                // not setting length bc i dont think songs change in length often enough to warrant it
-                println!("{}", "Done: Edited m3u track")
-            } else {
-                return Err("Index out of bounds".into());
-            }
+            || entry.title != title;
+
+        if changed {
+            entry.album = album;
+            entry.artist = artist;
+            entry.cover_path = cover_path;
+            entry.title = title;
+            println!("Done: Edited m3u track");
         }
+
+        Ok(())
+    } else {
+        // eprintln!("edit_m3u_track: Index {} out of bounds", index); // unnecessary, returning Err is enough.
+        Err("Index out of bounds".into())
     }
-    Ok(())
 }
 
-pub fn move_m3u_track(file_path: &str, from: usize, to: usize) -> std::io::Result<()> {
-    // todo: make this function return an error if it has an error
-    let mut playlist = read_m3u(file_path).unwrap(); // todo: check for valid result from read_m3u
-
+pub fn move_m3u_track(playlist: &mut M3uPlaylist, from: usize, to: usize) -> std::io::Result<()> {
     if playlist.entries.len() <= from {
         eprintln!(
             "move_m3u_track index out of bounds error | from: {} | len: {}",
@@ -360,7 +323,6 @@ pub fn move_m3u_track(file_path: &str, from: usize, to: usize) -> std::io::Resul
             ),
         ));
     }
-    let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
     let insert_at = if from < to { to - 1 } else { to };
 
     //if from >= playlist.entries.len() || insert_at >= playlist.entries.len(){
@@ -369,11 +331,8 @@ pub fn move_m3u_track(file_path: &str, from: usize, to: usize) -> std::io::Resul
     /* im not really sure whats going on that is causing this check to be freaky? can't explain just check it out and try moving songs to/from the very bottom of a playlist.
     i guess it's not really a big deal cus this shouldn't ever trigger.. but: todo: fix this error check */
 
+    let entry = playlist.entries.remove(from); // i wonder if there is a better way of doing this? .remove() has poor performance at huge playlist sizes.
     playlist.entries.insert(insert_at, entry);
-
-    if let Err(e) = write_m3u(file_path, &playlist, true, false, true) {
-        println!("move_m3u_track write_m3u error: {}", e);
-    }
 
     Ok(())
 }
