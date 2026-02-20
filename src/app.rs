@@ -1,8 +1,10 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
 use egui::{Id, Modal, ScrollArea};
+use gstreamer::ClockTime;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
+use gstreamer_pbutils::prelude::DiscovererStreamInfoExt;
 use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
@@ -289,8 +291,8 @@ impl Default for TemplateApp {
 
             now_playing_song: Some(SongCardData {
                 title: "".to_owned(),
-                artist: "none".to_owned(),  // todo: metadata
-                length: "--:--".to_owned(), // todo: parse
+                artist: "none".to_owned(),    // todo: metadata
+                length_string: "".to_owned(), // todo: parse
                 album: "none".to_owned(),
                 cover_path: "".to_owned(), //todo: metadata
                 path: std::path::PathBuf::from(""),
@@ -386,6 +388,7 @@ pub struct EditTrack {
     artist: String,
     cover: String,
     title: String,
+    length_string: String,
 }
 
 pub struct AddTrack {
@@ -424,8 +427,9 @@ pub fn get_metadata(
     */
     let uri = path_to_uri(path);
     let info = discoverer.discover_uri(&uri)?;
+    let info2 = info.stream_info();
 
-    let tags = info.tags();
+    let tags = info2.unwrap().tags();
 
     let title = tags
         .as_ref()
@@ -458,12 +462,20 @@ pub fn get_metadata(
             Some(map.as_slice().to_vec())
         });
 
+    let length = info.duration();
+    let length_usize = length.unwrap().mseconds() as usize;
+    let length_secs = length.unwrap().seconds();
+    let minutes = length_secs / 60;
+    let seconds = length_secs % 60;
+    let length_string = format!("{:02}:{:02}", minutes, seconds);
+
     let mut hasher = DefaultHasher::new();
     if album != "Unknown Album" && artist != "Unknown Artist" {
         format!("{}{}", album, artist).hash(&mut hasher); // this is like this so that we don't cache multiple of the same cover
     } else {
         uri.hash(&mut hasher);
     }
+
     let unique_id = hasher.finish();
     let output_path_str = format!("cache/cover_{}.jpg", unique_id);
     let output_path = PathBuf::from(output_path_str.clone());
@@ -1025,9 +1037,15 @@ impl eframe::App for TemplateApp {
                                 artist: song.artist.clone(),
                                 cover: song.cover_path.clone(),
                                 title: song.title.clone(),
+                                length_string: song.length_string.clone(),
                             })) {
                                 eprintln!("Failed to add metadata to queue: {}", e);
                             }
+                            /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
+                            because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
+                            A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺
+                            Really though I think it should be possible to pass a vec of M3uEditTask's and have the thread
+                            go through every item in the vec. */
                         }
                     }
                     // / //                 // / //
