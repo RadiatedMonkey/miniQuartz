@@ -22,7 +22,7 @@ pub fn draw_drop_bar(ui: &mut egui::Ui, start: egui::Pos2, end: egui::Pos2) {
 pub fn right_click_song_card(
     app: &mut TemplateApp,
     ui: &mut egui::Ui,
-    song_data: SongCardData,
+    mut song_data: SongCardData,
     index: usize,
 ) {
     ui.set_max_width(200.0);
@@ -58,6 +58,9 @@ pub fn right_click_song_card(
             eprintln!("Failed to add removal to queue: {}", e);
         }
         app.songs.articles.remove(index);
+    }
+    if ui.button("Update Metadata").clicked() {
+        load_metadata_if_needed(&mut song_data, app.metadata_sender.clone());
     }
 }
 
