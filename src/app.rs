@@ -253,7 +253,7 @@ impl Default for TemplateApp {
                             eprintln!("Error writing m3u: {}", e);
                         } else {
                             println!("Successfully wrote m3u");
-                        } // why is this giving error and then writing anyway?
+                        }
                     }
                 }
             }
