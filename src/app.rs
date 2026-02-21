@@ -243,15 +243,14 @@ impl Default for TemplateApp {
                     println!("Write here!");
                     need_write = false;
                     urgent = false;
-                    for (path, playlist) in &pending_updates {
+                    for (path, playlist) in pending_updates.drain() {
                         // todo: path should be part of M3uPlaylist
-                        if let Err(e) = write_m3u(path, playlist, true, false, true) {
+                        if let Err(e) = write_m3u(path, &playlist, true, false, true) {
                             eprintln!("Error writing m3u: {}", e);
                         } else {
                             println!("Successfully wrote m3u");
                         }
                     }
-                    pending_updates.clear();
                 }
             }
         });
@@ -468,7 +467,6 @@ pub fn get_metadata(
     let minutes = length_secs / 60;
     let seconds = length_secs % 60;
     let length_string = format!("{:02}:{:02}", minutes, seconds);
-    println!("{} | {}", title, length_string);
 
     let mut hasher = DefaultHasher::new();
     if album != "Unknown Album" && artist != "Unknown Artist" {
@@ -679,12 +677,31 @@ impl eframe::App for TemplateApp {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    let current_duration = format!(
+                                        "{}",
+                                        self.now_playing_song
+                                            .clone()
+                                            .unwrap_or(SongCardData {
+                                                title: "No song playing".to_string(),
+                                                artist: "".to_string(),
+                                                album: "".to_string(),
+                                                length_string: "--:--".to_string(),
+                                                cover_path: "".to_string(),
+                                                path: PathBuf::from(""),
+                                                texture: None,
+                                                playing: false,
+                                                metadata_loaded: true,
+                                                display: true
+                                            })
+                                            .length_string
+                                    );
                                     if success.is_ok()
                                         && (state == gstreamer::State::Playing
                                             || state == gstreamer::State::Paused)
                                     {
                                         let duration = self.duration_ms.max(1) as f32;
                                         let mut pos = self.position_ms as f32;
+                                        ui.label(current_duration);
                                         let response = ui.add(
                                             egui::Slider::new(&mut pos, 0.0..=duration)
                                                 .trailing_fill(true)
@@ -708,6 +725,7 @@ impl eframe::App for TemplateApp {
                                                 .expect("Seek failed");
                                         }
                                     } else {
+                                        ui.label(current_duration);
                                         ui.add_enabled(
                                             false,
                                             egui::Slider::new(&mut 0.0, 0.0..=1.0),
