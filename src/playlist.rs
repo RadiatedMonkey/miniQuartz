@@ -2,6 +2,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, Write};
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 use crate::TemplateApp;
 use crate::utilities::{path_to_string, path_to_string_name, show_error, to_base62};
@@ -61,6 +62,7 @@ impl Songs {
             articles: Vec::from_iter(iter),
         }
     }
+
     pub fn new_from_folder(folder_path: &Path) -> Songs {
         let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a"];
 
@@ -132,10 +134,29 @@ pub fn get_playlists(path: &str) -> std::io::Result<Vec<PathBuf>> {
     Ok(playlist_files)
 }
 
+pub fn print_walkdir() -> Result<(), Box<dyn std::error::Error>> {
+    let path = "./playlists";
+
+    if !std::path::Path::new(path).exists() {
+        println!("Directory '{}' does not exist!", path);
+        return Ok(());
+    }
+
+    let walker = WalkDir::new(path).into_iter();
+    let mut count = 0;
+    for entry in walker {
+        println!("{}", entry?.path().display());
+        count += 1;
+    }
+    println!("Total entries: {}", count);
+    Ok(())
+}
+
 pub fn add_to_playlist(
     playlist: &mut M3uPlaylist,
     new_song: &SongCardData,
-) -> Result<(), Box<dyn std::error::Error>> { // todo: doesn't need to return error if there is nothing that can have an error here.
+) -> Result<(), Box<dyn std::error::Error>> {
+    // todo: doesn't need to return error if there is nothing that can have an error here.
     playlist.add_track(
         &format!("{}", path_to_string(&new_song.path)),
         &new_song.length_string,
@@ -151,7 +172,8 @@ pub fn add_to_playlist(
 pub fn remove_from_playlist(
     playlist: &mut M3uPlaylist,
     index_to_remove: usize,
-) -> Result<(), Box<dyn std::error::Error>> { // todo: doesn't need to return error if there is nothing that can have an error here.
+) -> Result<(), Box<dyn std::error::Error>> {
+    // todo: doesn't need to return error if there is nothing that can have an error here.
     if index_to_remove < playlist.entries.len() {
         playlist.entries.remove(index_to_remove);
     } else {
@@ -285,7 +307,6 @@ pub fn edit_m3u_track(
     cover_path: String,
     title: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     if let Some(entry) = playlist.entries.get_mut(index) {
         let changed = entry.album != album
             || entry.artist != artist
