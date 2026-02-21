@@ -127,8 +127,8 @@ impl Default for TemplateApp {
     fn default() -> Self {
         gstreamer::init().expect("Failed to init GStreamer"); // todo: expect should be an error message
 
-        let (result_tx, result_rx) = std::sync::mpsc::channel::<MetadataResult>();
-        let (req_tx, req_rx) = std::sync::mpsc::channel::<MetadataRequest>();
+        let (result_tx, metadata_receiver) = std::sync::mpsc::channel::<MetadataResult>();
+        let (metadata_sender, req_rx) = std::sync::mpsc::channel::<MetadataRequest>();
 
         std::thread::spawn(move || {
             let discoverer =
@@ -180,17 +180,7 @@ impl Default for TemplateApp {
                         match task {
                             M3uEditTask::Edit(data) => {
                                 println!("{}", "Queued: Edit m3u track");
-                                //let mut m3u_playlist = read_m3u(&data.path).unwrap();
                                 if let Err(e) = edit_m3u_track(
-                                    // match ok or err here to get the modified playlist i thinks
-                                    /* ok i m so sleepy rn but heres what im trying to do:
-                                    was in the process of converting these editing functions into functions
-                                    that take in an M3uPlaylist, modify it in memory only, then return the modified.
-                                    that way, multiple m3u editing functions can be chained together and then written
-                                    to disk all at once. should save a ton of disk writes. (issue #30 on github)
-                                    current issue that needs to be solved is that these requests to edit include which
-                                    playlist to edit, so the bulk processing needs to have an M3uPlaylist for each file
-                                    that needs to be edited, adding them as needed. */
                                     playlist,
                                     data.index,
                                     data.album,
@@ -204,18 +194,15 @@ impl Default for TemplateApp {
                                     );
                                 } else {
                                     time_since_task_added = std::time::Instant::now();
-                                    need_write = true; // make this else block a function cus its repeated <- past me wtf does tihs mean
+                                    need_write = true; // make the code within this else{} a function, since it's repeated frequently.
                                 }
                             }
                             M3uEditTask::Add(data) => {
                                 println!("{}", "Queued: Adding m3u track");
-                                if let Err(e) = add_to_playlist(playlist, &data.new_song) {
-                                    eprintln!("Error adding m3u track: {}", e);
-                                } else {
-                                    time_since_task_added = std::time::Instant::now();
-                                    need_write = true;
-                                    urgent = true;
-                                }
+                                add_to_playlist(playlist, &data.new_song);
+                                time_since_task_added = std::time::Instant::now();
+                                need_write = true;
+                                urgent = true;
                             }
                             M3uEditTask::Remove(data) => {
                                 println!("{}", "Queued: Removing m3u track");
@@ -293,10 +280,10 @@ impl Default for TemplateApp {
 
             now_playing_song: Some(SongCardData {
                 title: "".to_owned(),
-                artist: "none".to_owned(),    // todo: metadata
+                artist: "none".to_owned(),
                 length_string: "".to_owned(), // todo: parse
                 album: "none".to_owned(),
-                cover_path: "".to_owned(), //todo: metadata
+                cover_path: "".to_owned(),
                 path: std::path::PathBuf::from(""),
                 texture: None,
                 playing: false,
@@ -304,8 +291,8 @@ impl Default for TemplateApp {
                 display: true,
             }),
 
-            metadata_receiver: result_rx,
-            metadata_sender: req_tx,
+            metadata_receiver,
+            metadata_sender,
 
             title_header_width: 250.0,
             total_header_width: 0.0,
@@ -381,6 +368,7 @@ pub struct Metadata {
     artist: String,
     album: String,
     cover_path: String,
+    length_string: String,
 }
 
 pub struct EditTrack {
@@ -464,11 +452,12 @@ pub fn get_metadata(
         });
 
     let length = info.duration();
-    let length_usize = length.unwrap().mseconds() as usize;
+    //let length_usize = length.unwrap().mseconds() as usize;
     let length_secs = length.unwrap().seconds();
     let minutes = length_secs / 60;
     let seconds = length_secs % 60;
     let length_string = format!("{:02}:{:02}", minutes, seconds);
+    println!("{} | {}", title, length_string);
 
     let mut hasher = DefaultHasher::new();
     if album != "Unknown Album" && artist != "Unknown Artist" {
@@ -497,6 +486,7 @@ pub fn get_metadata(
                             artist: " ".to_owned(),
                             album,
                             cover_path: "assets/icon-256.png".to_owned(),
+                            length_string,
                         });
                     }
                 }
@@ -508,6 +498,7 @@ pub fn get_metadata(
             artist,
             album,
             cover_path: output_path_str,
+            length_string,
         });
     }
     //std::thread::sleep(std::time::Duration::from_millis(10));
@@ -516,6 +507,7 @@ pub fn get_metadata(
         artist,
         album,
         cover_path: "assets/icon-256.png".to_owned(),
+        length_string,
     })
 }
 
@@ -1024,6 +1016,7 @@ impl eframe::App for TemplateApp {
                         {
                             song.album = result.data.album.clone();
                             song.artist = result.data.artist.clone();
+                            song.length_string = result.data.length_string.clone();
                             if !result.data.title.is_empty() {
                                 song.title = result.data.title.clone();
                             } else {

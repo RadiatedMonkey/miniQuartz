@@ -155,8 +155,7 @@ pub fn print_walkdir() -> Result<(), Box<dyn std::error::Error>> {
 pub fn add_to_playlist(
     playlist: &mut M3uPlaylist,
     new_song: &SongCardData,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // todo: doesn't need to return error if there is nothing that can have an error here.
+){ // todo: doesn't need to return error if there is nothing that can have an error here.
     playlist.add_track(
         &format!("{}", path_to_string(&new_song.path)),
         &new_song.length_string,
@@ -165,15 +164,12 @@ pub fn add_to_playlist(
         &format!("{}", new_song.cover_path),
         &new_song.album,
     );
-
-    Ok(())
 }
 
 pub fn remove_from_playlist(
     playlist: &mut M3uPlaylist,
     index_to_remove: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // todo: doesn't need to return error if there is nothing that can have an error here.
     if index_to_remove < playlist.entries.len() {
         playlist.entries.remove(index_to_remove);
     } else {
