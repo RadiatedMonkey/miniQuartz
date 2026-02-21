@@ -182,7 +182,7 @@ pub fn remove_from_playlist(
 #[derive(Clone, PartialEq)]
 pub struct PlaylistEntry {
     pub path: String,
-    pub length: String, // -1 if unknown
+    pub length: String, 
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -302,18 +302,21 @@ pub fn edit_m3u_track(
     artist: String,
     cover_path: String,
     title: String,
+    length_string: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(entry) = playlist.entries.get_mut(index) {
         let changed = entry.album != album
             || entry.artist != artist
             || entry.cover_path != cover_path
-            || entry.title != title;
+            || entry.title != title
+            || entry.length != length_string;
 
         if changed {
             entry.album = album;
             entry.artist = artist;
             entry.cover_path = cover_path;
             entry.title = title;
+            entry.length = length_string;
             println!("Done: Edited m3u track");
         }
 

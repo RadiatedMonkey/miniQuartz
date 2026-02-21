@@ -187,6 +187,7 @@ impl Default for TemplateApp {
                                     data.artist,
                                     data.cover,
                                     data.title,
+                                    data.length_string,
                                 ) {
                                     eprintln!(
                                         "Failed to edit m3u track @ metadata cache thread: {}",
