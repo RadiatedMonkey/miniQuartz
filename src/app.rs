@@ -580,6 +580,7 @@ impl eframe::App for TemplateApp {
                         }
                         if (ui.button("Meoooww")).clicked() {
                             show_error(self, "Meow Button Pressed".to_owned());
+                            print_walkdir();
                             println!("{}", "Meow Button Pressed".to_string());
                         }
                     });

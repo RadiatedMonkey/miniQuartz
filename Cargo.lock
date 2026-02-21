@@ -2358,6 +2358,7 @@ dependencies = [
  "m3u",
  "serde",
  "url 2.5.8",
+ "walkdir",
  "wasm-bindgen-futures",
  "web-sys",
 ]
