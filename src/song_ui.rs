@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
 use egui::{Context, Id, Ui};
 
 use crate::TemplateApp;
-use crate::app::{AddTrack, M3uEditTask, RemoveTrack, load_metadata_if_needed};
+use crate::app::{AddTrack, M3uEditTask, RemovePlaylist, RemoveTrack, load_metadata_if_needed};
 use crate::playlist::SongCardData;
 use crate::playlist::{get_playlists, reset_playlist_ids};
 use crate::utilities::{path_to_string, path_to_string_name, show_error};
@@ -83,6 +85,7 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
     egui::Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
         ui.set_width(200.0);
         ui.heading("Delete playlist?");
+        ui.label(path_to_string(&app.playlist_to_delete.clone().unwrap_or(PathBuf::from(""))));
 
         ui.add_space(32.0);
 
@@ -93,15 +96,19 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
                 if ui.button("Yes").clicked() {
                     app.warning_show = false;
                     if app.playlist_to_delete.is_some(){
-                        if let Err(e) = std::fs::remove_file(app.playlist_to_delete.as_ref().unwrap()){
+                        if let Err(e) = app.m3u_sender.send(M3uEditTask::RemovePlaylist(RemovePlaylist {
+                                file_path: app.playlist_to_delete.clone(),
+                            })) {
+                                eprintln!("Failed to add playlist deletion to queue: {}", e);
+                            }
+                       if let Err(e) = std::fs::remove_file(app.playlist_to_delete.as_ref().unwrap()){
                             show_error(app, format!("Failed to delete file: {}",e.to_string()));
                             println!("delete_playlist_warning: {}",e);
                         }
                         app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get because one is now deleted & reset_playlist_ids wont like that
                         reset_playlist_ids(app);
                         app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get again because id's are now changed
-                        /* doing this twice? bleh.
-                        should just be removing the single removed playlist from ram or skipping it in get_playlists*/
+                        // doing this twice? bleh. should just be removing the single removed playlist from ram or skipping it in get_playlists*/
                     }
                 }
 

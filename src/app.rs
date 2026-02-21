@@ -166,6 +166,7 @@ impl Default for TemplateApp {
                             M3uEditTask::Add(data) => data.file_path.clone(),
                             M3uEditTask::Remove(data) => data.file_path.clone(),
                             M3uEditTask::Move(data) => data.file_path.clone(),
+                            M3uEditTask::RemovePlaylist(_data) => "NOREAD".to_string(),
                         };
                         let playlist = pending_updates.entry(PathBuf::from(path.clone())).or_insert_with(|| {
                             /* note cus this is kinda weird to read, this is setting playlist to the read M3uPlaylist. If the M3uPlaylist hasn't
@@ -226,6 +227,9 @@ impl Default for TemplateApp {
                                     urgent = true;
                                 }
                             }
+                            M3uEditTask::RemovePlaylist(data) => {
+                                // auummm how do u do this
+                            }
                         }
                     }
                     Err(_) => {
@@ -247,6 +251,7 @@ impl Default for TemplateApp {
                             println!("Successfully wrote m3u");
                         }
                     }
+                    pending_updates.clear();
                 }
             }
         });
@@ -398,11 +403,16 @@ pub struct MoveTrack {
     to: usize,
 }
 
+pub struct RemovePlaylist {
+    pub file_path: Option<PathBuf>,
+}
+
 pub enum M3uEditTask {
     Edit(EditTrack),
     Add(AddTrack),
     Remove(RemoveTrack),
     Move(MoveTrack),
+    RemovePlaylist(RemovePlaylist),
 }
 
 // scared to move the multithreaded stuff to another file (～￣▽￣)～ but metadata stuff Should go somewhere else.
