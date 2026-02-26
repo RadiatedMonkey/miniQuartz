@@ -7,6 +7,8 @@ use walkdir::WalkDir;
 use crate::TemplateApp;
 use crate::utilities::{path_to_string, path_to_string_name, show_error, to_base62};
 
+const M3U_HEADER: &'static str = "#EXTM3U";
+
 /// PLAYLIST ///
 /// Song management & organization
 pub struct Songs {
@@ -234,9 +236,12 @@ impl M3uPlaylist {
     }
 }
 
-pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
+pub fn read_m3u<P: AsRef<Path>>(path: P) -> anyhow::Result<M3uPlaylist> {
+    let path = path.as_ref();
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
+    let mut lines = reader.lines();
 
     let mut playlist = M3uPlaylist::new();
     // Temporary storage for metadata read from the previous line
@@ -246,7 +251,16 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
     let mut current_cover_path = String::new();
     let mut current_album = String::new();
 
-    for line_result in reader.lines() {
+    // Verify that this file is actually an M3U file
+    let is_header = lines.next().transpose()?.map(|header| {
+        header == M3U_HEADER
+    }).unwrap_or(false);
+
+    if !is_header {
+        anyhow::bail!("\"{}\" is not an M3U file.", path.to_string_lossy());
+    }
+
+    for line_result in lines {
         let line = line_result?;
         let trimmed = line.trim();
 
