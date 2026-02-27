@@ -2,10 +2,14 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, Write};
 use std::path::{Path, PathBuf};
+use anyhow::Context as _;
 use walkdir::WalkDir;
 
 use crate::TemplateApp;
 use crate::utilities::{path_to_string, path_to_string_name, show_error, to_base62};
+
+const M3U_HEADER: &'static str = "#EXTM3U";
+const M3U_SEPARATOR: char = '␟';
 
 /// PLAYLIST ///
 /// Song management & organization
@@ -179,7 +183,7 @@ pub fn remove_from_playlist(
     Ok(())
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlaylistEntry {
     pub path: String,
     pub length: String, 
@@ -191,6 +195,7 @@ pub struct PlaylistEntry {
 
 #[derive(Clone, Default, PartialEq)]
 pub struct M3uPlaylist {
+    pub title: String,
     pub entries: Vec<PlaylistEntry>,
     pub path: String,
     pub texture: Option<egui::TextureHandle>,
@@ -208,8 +213,9 @@ impl IntoIterator for M3uPlaylist {
 impl M3uPlaylist {
     pub fn new() -> Self {
         M3uPlaylist {
+            title: String::new(),
             entries: Vec::new(),
-            path: "".to_string(),
+            path: String::new(),
             texture: None,
         }
     }
@@ -234,9 +240,12 @@ impl M3uPlaylist {
     }
 }
 
-pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
+pub fn read_m3u<P: AsRef<Path>>(path: P) -> anyhow::Result<M3uPlaylist> {
+    let path = path.as_ref();
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
+    let mut lines = reader.lines();
 
     let mut playlist = M3uPlaylist::new();
     // Temporary storage for metadata read from the previous line
@@ -246,49 +255,62 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> std::io::Result<M3uPlaylist> {
     let mut current_cover_path = String::new();
     let mut current_album = String::new();
 
-    for line_result in reader.lines() {
-        let line = line_result?;
-        let trimmed = line.trim();
+    // Verify that this file is actually an M3U file
+    let is_header = lines.next().transpose()?.map(|header| {
+        header == M3U_HEADER
+    }).unwrap_or(false);
 
-        if trimmed.is_empty() {
-            continue;
-        }
+    if !is_header {
+        anyhow::bail!("\"{}\" is not an M3U file.", path.to_string_lossy());
+    }
 
-        if trimmed.starts_with("#EXTINF:") {
-            let content = &trimmed[8..];
-            let parts: Vec<&str> = content.split('␟').collect(); // ␟ is the "Unit Separator" symbol, not the country code.
-            if parts.len() != 5 {
-                println!(
-                    "Read m3u error: Malformed playlist file, track missing full #EXTINF. This file may be corrupted or incompatible with MiniQuartz\nlen: {}\nline: {}",
-                    parts.len(),
-                    line
-                ); // would be really nice if the user could see this error!
-                break;
-            } else {
-                current_length = parts[0].trim().to_string();
-                current_title = parts[1].trim().to_string();
-                current_artist = parts[2].trim().to_string();
-                current_cover_path = parts[3].trim().to_string();
-                current_album = parts[4].trim().to_string();
+    while let Some(line) = lines.next() {
+        let line = line?;
+        
+        let hash = line.find("#");
+        let colon = line.find(":");
+
+        if let Some(hash) = hash && let Some(colon) = colon {
+            // Ensure that colon comes after hash
+            if hash >= colon {
+                anyhow::bail!("Invalid M3U directive format");
             }
-        } else if trimmed.starts_with('#') {
-            continue;
-        } else {
-            playlist.entries.push(PlaylistEntry {
-                path: trimmed.to_string(),
-                length: current_length.clone(),
-                title: current_title.clone(),
-                artist: current_artist.clone(),
-                cover_path: current_cover_path.clone(),
-                album: current_album.clone(),
-            });
 
-            // Reset metadata for next entry : is this necessary?
-            current_length.clear();
-            current_title.clear();
-            current_artist.clear();
-            current_cover_path.clear();
-            current_album.clear();
+            // This is a directive line
+            let directive = &line[hash + 1..colon];
+            match directive {
+                "EXTINF" => {
+                    // Lists a file in the playlist
+                    let meta = line[colon + 1..].split(M3U_SEPARATOR).collect::<Vec<_>>();
+                    if meta.len() != 5 {
+                        anyhow::bail!("M3U EXTINF malformed or incompatible with MiniQuartz");
+                    }
+
+                    // let length = meta[0].parse::<u32>()
+                    //     .context("Unable to parse song runtime")?;
+                    
+                    let path = lines.next().transpose()?;
+                    if path.is_none() {
+                        anyhow::bail!("Song filepath is missing");
+                    }
+
+                    playlist.entries.push(PlaylistEntry {
+                        path: path.unwrap(),
+                        length: meta[0].to_owned(),
+                        title: meta[1].to_owned(),
+                        artist: meta[2].to_owned(),
+                        cover_path: meta[3].to_owned(),
+                        album: meta[4].to_owned(),
+                    });
+                }
+                "PLAYLIST" => {
+                    let title = &line[colon + 1..];
+                    playlist.title = title.to_owned();
+                }
+                _ => anyhow::bail!("Unknown M3U directive: {directive}")
+            }
+        } else {
+            // This is a data line
         }
     }
 
