@@ -79,6 +79,9 @@ pub struct TemplateApp {
     pub now_playing_song: Option<SongCardData>,
 
     #[serde(skip)]
+    pub selected_songs: Vec<usize>,
+
+    #[serde(skip)]
     pub metadata_receiver: Receiver<MetadataResult>,
     #[serde(skip)]
     pub metadata_sender: Sender<MetadataRequest>,
@@ -228,7 +231,7 @@ impl Default for TemplateApp {
                                 }
                             }
                             M3uEditTask::RemovePlaylist(data) => {
-                                // auummm how do u do this
+                                // auummm
                             }
                         }
                     }
@@ -295,6 +298,8 @@ impl Default for TemplateApp {
                 metadata_loaded: false,
                 display: true,
             }),
+
+            selected_songs: vec![],
 
             metadata_receiver,
             metadata_sender,
@@ -589,7 +594,9 @@ impl eframe::App for TemplateApp {
                         }
                         if (ui.button("Meoooww")).clicked() {
                             show_error(self, "Meow Button Pressed".to_owned());
-                            print_walkdir();
+                            if let Err(e) = print_walkdir() {
+                                eprintln!("Walkdir error: {}", e);
+                            }
                             println!("{}", "Meow Button Pressed".to_string());
                         }
                     });
@@ -1077,8 +1084,8 @@ impl eframe::App for TemplateApp {
                     // / //                 // / //
                     for i in start..end {
                         //let song = &mut self.songs.articles[i];
-                        let (clicked, move_to) = draw_song_card(self, ctx, ui, i);
-                        if clicked {
+                        let (clicked, double_clicked, move_to) = draw_song_card(self, ctx, ui, i);
+                        if double_clicked {
                             let song: &SongCardData = &self.songs.articles[i];
                             let path = song.path.clone();
 
@@ -1086,6 +1093,8 @@ impl eframe::App for TemplateApp {
                             self.now_playing_song = Some(song.clone());
 
                             play_song(self, path);
+                        } else if clicked {
+                            self.selected_songs.push(i);
                         }
                         if let Some(target_idx) = move_to {
                             if let Some(source_idx) = self.dragged_song_index {
