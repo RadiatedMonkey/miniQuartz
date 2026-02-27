@@ -80,6 +80,8 @@ pub struct TemplateApp {
 
     #[serde(skip)]
     pub selected_songs: Vec<usize>,
+    #[serde(skip)]
+    pub selected_songs_origin: usize,
 
     #[serde(skip)]
     pub metadata_receiver: Receiver<MetadataResult>,
@@ -300,6 +302,7 @@ impl Default for TemplateApp {
             }),
 
             selected_songs: vec![],
+            selected_songs_origin: 0,
 
             metadata_receiver,
             metadata_sender,
@@ -1082,8 +1085,8 @@ impl eframe::App for TemplateApp {
                     // / //                 // / //
                     // / displaying song cards / //
                     // / //                 // / //
+                    let mut clicked_song = false;
                     for i in start..end {
-                        //let song = &mut self.songs.articles[i];
                         let (clicked, double_clicked, move_to) = draw_song_card(self, ctx, ui, i);
                         if double_clicked {
                             let song: &SongCardData = &self.songs.articles[i];
@@ -1094,7 +1097,28 @@ impl eframe::App for TemplateApp {
 
                             play_song(self, path);
                         } else if clicked {
-                            self.selected_songs.push(i);
+                            clicked_song = true;
+                            ui.input(|input| {
+                                if input.modifiers.shift {
+                                    if self.selected_songs.len() == 0 {
+                                        self.selected_songs_origin = i;
+                                    }
+                                    self.selected_songs.clear();
+                                    for i2 in self.selected_songs_origin.min(i)
+                                        ..=self.selected_songs_origin.max(i)
+                                    {
+                                        self.selected_songs.push(i2);
+                                    }
+                                    self.selected_songs.push(i); // i really gotta stop using `i` for iterators ＞﹏＜
+                                } else if input.modifiers.ctrl {
+                                    self.selected_songs.push(i);
+                                    self.selected_songs_origin = i;
+                                } else {
+                                    self.selected_songs.clear();
+                                    self.selected_songs.push(i);
+                                    self.selected_songs_origin = i;
+                                }
+                            });
                         }
                         if let Some(target_idx) = move_to {
                             if let Some(source_idx) = self.dragged_song_index {
@@ -1122,6 +1146,10 @@ impl eframe::App for TemplateApp {
                         }
                     }
                     if ui.input(|i| i.pointer.any_released()) {
+                        if !clicked_song {
+                            println!("clicked not song");
+                            self.selected_songs.clear();
+                        }
                         if let Some((from, to)) = self.swap_request {
                             self.m3u_sender
                                 .send(M3uEditTask::Move(MoveTrack {
