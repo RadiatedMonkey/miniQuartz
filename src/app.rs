@@ -178,6 +178,7 @@ impl Default for TemplateApp {
                             been read yet, then it reads it and adds it to pending_updates. That way it can write all changes to a playlist at once */
                             println!("Loading into cache: {:?}", path);
                             read_m3u(&path).unwrap_or_else(|_| M3uPlaylist {
+                                title: String::new(),
                                 entries: vec![],
                                 path: path,
                                 texture: None,

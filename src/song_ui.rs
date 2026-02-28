@@ -350,9 +350,8 @@ pub fn draw_song_card(
                                 );
                             });
                         });
-                        let remaining_width =
-                            ui.available_width() - 60.0;
-                        //println!("{}",remaining_width);
+                        let remaining_width = (ui.available_width() - 60.0).clamp(0.0, f32::MAX);
+
                         ui.allocate_ui_with_layout(
                             egui::vec2(
                                 remaining_width,
