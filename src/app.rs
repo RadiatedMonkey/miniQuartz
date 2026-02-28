@@ -79,6 +79,11 @@ pub struct TemplateApp {
     pub now_playing_song: Option<SongCardData>,
 
     #[serde(skip)]
+    pub selected_songs: Vec<usize>,
+    #[serde(skip)]
+    pub selected_songs_origin: usize,
+
+    #[serde(skip)]
     pub metadata_receiver: Receiver<MetadataResult>,
     #[serde(skip)]
     pub metadata_sender: Sender<MetadataRequest>,
@@ -229,7 +234,7 @@ impl Default for TemplateApp {
                                 }
                             }
                             M3uEditTask::RemovePlaylist(data) => {
-                                // auummm how do u do this
+                                // auummm
                             }
                         }
                     }
@@ -241,7 +246,6 @@ impl Default for TemplateApp {
                 if (time_since_task_added.elapsed() >= std::time::Duration::new(1, 0) && need_write)
                     || urgent
                 {
-                    println!("Write here!");
                     need_write = false;
                     urgent = false;
                     for (path, playlist) in pending_updates.drain() {
@@ -296,6 +300,9 @@ impl Default for TemplateApp {
                 metadata_loaded: false,
                 display: true,
             }),
+
+            selected_songs: vec![],
+            selected_songs_origin: 0,
 
             metadata_receiver,
             metadata_sender,
@@ -590,7 +597,9 @@ impl eframe::App for TemplateApp {
                         }
                         if (ui.button("Meoooww")).clicked() {
                             show_error(self, "Meow Button Pressed".to_owned());
-                            print_walkdir();
+                            if let Err(e) = print_walkdir() {
+                                eprintln!("Walkdir error: {}", e);
+                            }
                             println!("{}", "Meow Button Pressed".to_string());
                         }
                     });
@@ -1076,17 +1085,49 @@ impl eframe::App for TemplateApp {
                     // / //                 // / //
                     // / displaying song cards / //
                     // / //                 // / //
-                    for i in start..end {
-                        //let song = &mut self.songs.articles[i];
-                        let (clicked, move_to) = draw_song_card(self, ctx, ui, i);
-                        if clicked {
-                            let song: &SongCardData = &self.songs.articles[i];
+                    let mut clicked_song = false;
+                    for song_index in start..end {
+                        let (clicked, secondary_clicked, double_clicked, move_to) =
+                            draw_song_card(self, ctx, ui, song_index);
+                        if double_clicked {
+                            let song: &SongCardData = &self.songs.articles[song_index];
                             let path = song.path.clone();
 
                             self.now_playing = Some(path.clone());
                             self.now_playing_song = Some(song.clone());
 
                             play_song(self, path);
+                        } else if clicked || secondary_clicked {
+                            clicked_song = true;
+                            ui.input(|input| {
+                                if input.modifiers.shift {
+                                    if self.selected_songs.len() == 0 {
+                                        self.selected_songs_origin = song_index;
+                                    }
+                                    self.selected_songs.clear();
+                                    for i in self.selected_songs_origin.min(song_index)
+                                        ..=self.selected_songs_origin.max(song_index)
+                                    {
+                                        self.selected_songs.push(i);
+                                    }
+                                    if !self.selected_songs.contains(&song_index) {
+                                        self.selected_songs.push(song_index);
+                                    } else {
+                                        println!(
+                                            "Attempted selecting already selected song; skipping"
+                                        );
+                                    }
+                                } else if input.modifiers.ctrl {
+                                    self.selected_songs.push(song_index);
+                                    self.selected_songs_origin = song_index;
+                                } else {
+                                    if clicked || (secondary_clicked && !self.selected_songs.contains(&song_index)) {
+                                        self.selected_songs.clear();
+                                        self.selected_songs.push(song_index);
+                                        self.selected_songs_origin = song_index;
+                                    }
+                                }
+                            });
                         }
                         if let Some(target_idx) = move_to {
                             if let Some(source_idx) = self.dragged_song_index {
@@ -1113,7 +1154,11 @@ impl eframe::App for TemplateApp {
                             });
                         }
                     }
-                    if ui.input(|i| i.pointer.any_released()) {
+                    if ui.input(|i| i.pointer.primary_released()) {
+                        if !clicked_song {
+                            println!("clicked not song");
+                            self.selected_songs.clear();
+                        }
                         if let Some((from, to)) = self.swap_request {
                             self.m3u_sender
                                 .send(M3uEditTask::Move(MoveTrack {

@@ -15,12 +15,12 @@ Goals, in order of priority:
 
 If all goals are met, then it should provide a similar experience to streaming platforms, while being entirely local files.
 
-
 Currently using egui for the GUI, and gstreamer for the audio playback.
 
 ### How to contribute
-Check out the issues page, and pick (or create) something that someone isn't already working on. Make a fork, make a pr `(≧◡≦)`
-We're not super strict, so most things will get merged.
+Check out the issues page, and pick (or create) something that someone isn't already working on. Make a fork, make a pr `(≧◡≦)` We're not super strict, so most things will get merged.
+
+Please leave a comment on an issue if you are working on it.
 
 ### Development instructions for GStreamer
 MiniQuartz doesn't currently compile GStreamer in the application. You must add it manually for now:

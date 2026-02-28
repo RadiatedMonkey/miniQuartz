@@ -34,17 +34,27 @@ pub fn right_click_song_card(
             let playlist_name = &path_to_string_name(playlist)[4..];
             let playlist_path = path_to_string(&playlist.to_path_buf());
             if ui.button(playlist_name).clicked() {
-                if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack {
-                    file_path: playlist_path.clone(),
-                    new_song: song_data.clone(),
-                })) {
-                    eprintln!("Failed to queue M3uEditTask: {}", e);
+                for song in &app.selected_songs {
+                    if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack {
+                        file_path: playlist_path.clone(),
+                        new_song: app.songs.articles[song.clone()].clone(),
+                    })) {
+                        eprintln!("Failed to queue M3uEditTask: {}", e);
+                    }
                 }
-                if Some(playlist_path) == app.currently_selected_playlist_name {
-                    app.songs.articles.push(song_data.clone());
-                }
+                // if Some(playlist_path) == app.currently_selected_playlist_name {
+                //     for song in &app.selected_songs {
+                //         app.songs.articles.push(app.songs.articles[song.clone()].clone());
+                //     }
+                // }
+
+                // not really sure why push isn't working here? this is definetly not the way extend is meant to be used
                 if Some(playlist_name) == app.currently_selected_playlist_name.as_deref() {
-                    app.songs.articles.extend([song_data.clone()]);
+                    for song in &app.selected_songs {
+                        app.songs
+                            .articles
+                            .extend([app.songs.articles[song.clone()].clone()]);
+                    }
                 }
             }
         }
@@ -52,14 +62,21 @@ pub fn right_click_song_card(
     });
     if ui.button("Remove from playlist").clicked() {
         let playlist_path = path_to_string(&app.currently_selected_playlist_path.to_path_buf());
-        if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack {
-            file_path: playlist_path,
-            index_to_remove: index,
-        })) {
-            show_error(app, format!("Failed to add removal to queue: {}", e));
-            eprintln!("Failed to add removal to queue: {}", e);
+        app.selected_songs.sort_by(|a, b| b.cmp(a));
+        for song in &app.selected_songs {
+            if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack {
+                file_path: playlist_path.clone(),
+                index_to_remove: song.clone(),
+            })) {
+                //show_error(app, format!("Failed to add removal to queue: {}", e));
+                eprintln!("Failed to add removal to queue: {}", e);
+            }
+            if song < &app.songs.articles.len() {
+                app.songs.articles.remove(*song);
+            } else {
+                eprintln!("song_ui | Remove from playlist: Index for removal out of bounds.");
+            }
         }
-        app.songs.articles.remove(index);
     }
     if ui.button("Update Metadata").clicked() {
         load_metadata_if_needed(&mut song_data, app.metadata_sender.clone());
@@ -85,7 +102,9 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
     egui::Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
         ui.set_width(200.0);
         ui.heading("Delete playlist?");
-        ui.label(path_to_string(&app.playlist_to_delete.clone().unwrap_or(PathBuf::from(""))));
+        ui.label(path_to_string(
+            &app.playlist_to_delete.clone().unwrap_or(PathBuf::from("")),
+        ));
 
         ui.add_space(32.0);
 
@@ -95,16 +114,24 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
             |ui| {
                 if ui.button("Yes").clicked() {
                     app.warning_show = false;
-                    if app.playlist_to_delete.is_some(){
-                        if let Err(e) = app.m3u_sender.send(M3uEditTask::RemovePlaylist(RemovePlaylist {
-                                file_path: app.playlist_to_delete.clone(),
-                            })) {
-                                eprintln!("Failed to add playlist deletion to queue: {}", e);
-                            }
-                       if let Err(e) = std::fs::remove_file(app.playlist_to_delete.as_ref().unwrap()){
-                            show_error(app, format!("Failed to delete file: {}",e.to_string()));
-                            println!("delete_playlist_warning: {}",e);
+                    if app.playlist_to_delete.is_some() {
+                        if let Err(e) =
+                            app.m3u_sender
+                                .send(M3uEditTask::RemovePlaylist(RemovePlaylist {
+                                    file_path: app.playlist_to_delete.clone(),
+                                }))
+                        {
+                            eprintln!("Failed to add playlist deletion to queue: {}", e);
                         }
+                        if let Err(e) =
+                            std::fs::remove_file(app.playlist_to_delete.as_ref().unwrap())
+                        {
+                            show_error(app, format!("Failed to delete file: {}", e.to_string()));
+                            println!("delete_playlist_warning: {}", e);
+                        }
+                        // let index = app.playlists.iter().position(|item| item == &app.playlist_to_delete.clone().unwrap_or(PathBuf::from("")));
+                        // app.playlists.remove(index.unwrap_or(69420));
+
                         app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get because one is now deleted & reset_playlist_ids wont like that
                         reset_playlist_ids(app);
                         app.playlists = get_playlists("./playlists/").unwrap_or_default(); // get again because id's are now changed
@@ -186,22 +213,25 @@ pub fn draw_song_card(
     ctx: &Context,
     ui: &mut Ui,
     i: usize,
-) -> (bool, Option<usize>) {
+) -> (bool, bool, bool, Option<usize>) {
     if app.songs.articles.len() <= i {
         eprintln!("draw_song_card: Index out of range error");
-        return (false, None);
+        return (false, false, false, None);
     } /* this triggering when removing a song from a playlist is normal, since when you delete a song
     it removes an item from app.songs.articles before the for loop drawing the cards is finished.
     not sure if there's a better way to handle it, but this feels Just Okay. */
     let song = &mut app.songs.articles[i];
+    let selected = app.selected_songs.contains(&i) as i32 as f32;
     let mut clicked = false;
+    let mut secondary_clicked = false;
+    let mut double_clicked = false;
     let mut move_to = None;
     if !song.display {
         println!(
             "song display false; nothing rendered for {} - {}",
             song.title, song.artist
         );
-        return (false, None);
+        return (false, false, false, None);
     }
 
     load_metadata_if_needed(song, app.metadata_sender.clone());
@@ -260,16 +290,30 @@ pub fn draw_song_card(
             let visuals = ui.style().interact(&response);
             let fill_color =
                 if response.contains_pointer() || response.has_focus() {
-                    visuals.bg_fill.gamma_multiply(0.3)
+                    visuals.bg_fill.gamma_multiply(0.3*(selected+1.0))
                 } else {
-                    egui::Color32::TRANSPARENT
+                    visuals.bg_fill.gamma_multiply(selected*0.3)
                 };
             egui::Frame::new()
                 .fill(fill_color)
                 .inner_margin(ui.spacing().menu_margin)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label((i + 1).to_string());
+                        let playing = app.now_playing == Some(song.path.clone());
+                        let color_playing = if playing
+                        /* todo: this should be based off of the ID in the list, and the currently selected playlist.
+                        Will need to also add logic in the song reordering area to change the currently selected ID */
+                        {
+                            ui.visuals().selection.stroke.color
+                        } else {
+                            ui.visuals().strong_text_color()
+                        };
+                                if playing{
+                                    ui.add(egui::Label::new(egui::RichText::new("▶").color(ui.visuals().selection.stroke.color)).truncate());
+                                } else {
+                                    ui.add(egui::Label::new(egui::RichText::new(format!("{}",i+1)).color(ui.visuals().text_color())).truncate());
+                                };
+
                         ui.scope(|ui| {
                             ui.set_width(
                                 app.title_header_width + 25.0,
@@ -291,21 +335,12 @@ pub fn draw_song_card(
                             }
                             ui.vertical(|ui| {
                                 // song & artist names
-                                let color = if app.now_playing
-                                /* todo: this should be based off of the ID in the list, and the currently selected playlist.
-                                Will need to also add logic in the song reordering area to change the currently selected ID */
-                                == Some(song.path.clone())
-                                {
-                                    ui.visuals().selection.stroke.color // make this configurable later
-                                } else {
-                                    ui.visuals().strong_text_color()
-                                };
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new(
                                             &song.title,
                                         )
-                                        .color(color),
+                                        .color(color_playing),
                                     )
                                     .truncate(),
                                 );
@@ -351,23 +386,29 @@ pub fn draw_song_card(
         )
         .response;
     if response.double_clicked() {
+        double_clicked = true;
+    }
+    if response.clicked() {
         clicked = true;
+    }
+    if response.secondary_clicked(){
+        secondary_clicked = true;
     }
 
     if app.row_height.is_none() {
         app.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
     } // this really only needs to be done on startup
 
-    if app.now_playing == Some(song.path.clone()) {
+    /*if app.now_playing == Some(song.path.clone()) {
         // todo: this check should be based on file *and* playlist!
         ui.painter()
             .rect_filled(response.rect, 4.0, egui::Color32::from_white_alpha(10));
-    }
+    }*/
     let song_send = song.clone();
     app.apply_options(
         egui::Popup::context_menu(&response).id(Id::new(format!("context_menu{}", i))),
     )
     .show(|ui| right_click_song_card(app, ui, song_send, i));
 
-    (clicked, move_to)
+    (clicked, secondary_clicked, double_clicked, move_to)
 }
