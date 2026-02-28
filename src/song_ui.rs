@@ -113,7 +113,7 @@ pub fn right_click_playlist(app: &mut TemplateApp, ui: &mut egui::Ui, playlist_i
 }
 
 pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
-    egui::Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
+    let modal_response = egui::Modal::new(Id::new("Deletion warning")).show(ui.ctx(), |ui| {
         ui.set_width(200.0);
         ui.heading("Delete playlist?");
         ui.label(path_to_string(
@@ -160,6 +160,11 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
             },
         );
     });
+    if modal_response.response.clicked_elsewhere() {
+        println!("clicked outside of deletion modal; closing modal");
+        app.warning_show = false;
+        app.playlist_to_delete = None;
+    }
 }
 
 pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui) {
@@ -224,7 +229,7 @@ pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui) {
             },
         );
     });
-    if ui.input(|i| i.pointer.any_released()) && !modal_response.response.hovered() {
+    if modal_response.response.clicked_elsewhere() {
         println!("clicked outside of renaming modal; closing modal");
         app.rename_playlist_show = false;
         app.playlist_to_rename = None;
