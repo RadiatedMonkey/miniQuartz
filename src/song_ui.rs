@@ -4,9 +4,9 @@ use egui::{Context, Id, Ui};
 
 use crate::TemplateApp;
 use crate::app::{AddTrack, M3uEditTask, RemovePlaylist, RemoveTrack, load_metadata_if_needed};
-use crate::playlist::SongCardData;
+use crate::playlist::{SongCardData, create_empty_m3u};
 use crate::playlist::{get_playlists, reset_playlist_ids};
-use crate::utilities::{path_to_string, path_to_string_name, show_error};
+use crate::utilities::{path_to_string, path_to_string_name, show_error, to_base62};
 
 /// UI ///
 /// Drawing functions
@@ -25,7 +25,6 @@ pub fn right_click_song_card(
     app: &mut TemplateApp,
     ui: &mut egui::Ui,
     mut song_data: SongCardData,
-    index: usize,
 ) {
     ui.set_max_width(200.0);
 
@@ -96,6 +95,21 @@ pub fn right_click_playlist(app: &mut TemplateApp, ui: &mut egui::Ui, playlist_i
         app.warning_show = true;
         app.playlist_to_delete = Some(playlist.to_path_buf());
     }
+    if ui.button("Add new playlist").clicked() {
+        reset_playlist_ids(app);
+        let count = to_base62(app.playlists.len() + 1, 4);
+        let new_playlist_path = PathBuf::from(format!("./playlists/{}new playlist.m3u", count));
+        if let Err(error) = create_empty_m3u(&new_playlist_path) {
+            //show_error(app, error.to_string());
+            eprintln!("create_empty_m3u error: {}", error.to_string());
+        }
+        app.rename_playlist_show = true;
+        app.playlist_to_rename = Some(new_playlist_path.clone());
+        let name = &path_to_string_name(&new_playlist_path)[4..];
+        app.rename_to = name[..name.len() - 4].to_string();
+
+        app.playlists = get_playlists("./playlists/").unwrap_or_default();
+    }
 }
 
 pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
@@ -149,7 +163,7 @@ pub fn delete_playlist_warning(app: &mut TemplateApp, ui: &mut egui::Ui) {
 }
 
 pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui) {
-    egui::Modal::new(Id::new("Playlist options")).show(ui.ctx(), |ui| {
+    let modal_response = egui::Modal::new(Id::new("Playlist options")).show(ui.ctx(), |ui| {
         ui.set_width(200.0);
         ui.heading("Rename playlist");
         let mut text = app.rename_to.clone();
@@ -203,9 +217,18 @@ pub fn rename_playlist(app: &mut TemplateApp, ui: &mut egui::Ui) {
                     app.rename_playlist_show = false;
                     app.playlist_to_rename = None;
                 }
+                if ui.button("Cancel").clicked(){
+                    app.rename_playlist_show = false;
+                    app.playlist_to_rename = None;
+                }
             },
         );
     });
+    if ui.input(|i| i.pointer.any_released()) && !modal_response.response.hovered() {
+        println!("clicked outside of renaming modal; closing modal");
+        app.rename_playlist_show = false;
+        app.playlist_to_rename = None;
+    }
 }
 
 pub fn draw_song_card(
@@ -234,7 +257,7 @@ pub fn draw_song_card(
         return (false, false, false, None);
     }
     if !app.loaded_paths.contains(&song.path)
-       || (app.currently_selected_playlist_name == Some("Local Files".to_string()))
+        || (app.currently_selected_playlist_name == Some("Local Files".to_string()))
     {
         // TODO: Actual folder-space check
         load_metadata_if_needed(song, app.metadata_sender.clone());
@@ -412,7 +435,7 @@ pub fn draw_song_card(
     app.apply_options(
         egui::Popup::context_menu(&response).id(Id::new(format!("context_menu{}", i))),
     )
-    .show(|ui| right_click_song_card(app, ui, song_send, i));
+    .show(|ui| right_click_song_card(app, ui, song_send));
 
     (clicked, secondary_clicked, double_clicked, move_to)
 }

@@ -2,7 +2,6 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Error, Write};
 use std::path::{Path, PathBuf};
-use anyhow::Context as _;
 use walkdir::WalkDir;
 
 use crate::TemplateApp;
@@ -248,12 +247,6 @@ pub fn read_m3u<P: AsRef<Path>>(path: P) -> anyhow::Result<M3uPlaylist> {
     let mut lines = reader.lines();
 
     let mut playlist = M3uPlaylist::new();
-    // Temporary storage for metadata read from the previous line
-    let mut current_length = String::new();
-    let mut current_title = String::new();
-    let mut current_artist = String::new();
-    let mut current_cover_path = String::new();
-    let mut current_album = String::new();
 
     // Verify that this file is actually an M3U file
     let is_header = lines.next().transpose()?.map(|header| {

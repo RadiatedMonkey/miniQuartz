@@ -1,10 +1,8 @@
 //use std::collections::{binary_heap::{IntoIter, Iter}, hash_map::Iter};
 use anyhow;
 use egui::{Id, Modal, ScrollArea};
-use gstreamer::ClockTime;
 use gstreamer::prelude::*; // $env:PKG_CONFIG_PATH="C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
 use gstreamer::tags;
-use gstreamer_pbutils::prelude::DiscovererStreamInfoExt;
 use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
@@ -246,9 +244,9 @@ impl Default for TemplateApp {
                         // timeout. the check to write to m3u might belong here
                     }
                 }
-                //println!("{}",need_write);
-                if (time_since_task_added.elapsed() >= std::time::Duration::new(1, 0) && need_write)
-                    || urgent
+
+                let write_delay_time = 1000 - (urgent as u64 * 950);
+                if time_since_task_added.elapsed() >= std::time::Duration::from_millis(write_delay_time) && need_write
                 {
                     need_write = false;
                     urgent = false;
@@ -781,7 +779,13 @@ impl eframe::App for TemplateApp {
                         });
                     });
                 });
-
+                if self.warning_show {
+                    // todo: modal struct so that you don't have a million variables for every modal
+                    delete_playlist_warning(self, ui);
+                }
+                if self.rename_playlist_show {
+                    rename_playlist(self, ui);
+                }
                 if self.error_show {
                     Modal::new(Id::new("IO Error")).show(ui.ctx(), |ui| {
                         ui.set_width(200.0);
@@ -893,14 +897,6 @@ impl eframe::App for TemplateApp {
                                 }
                             }
                         });
-                    }
-
-                    if self.warning_show {
-                        // todo: modal struct so that you don't have a million variables for every modal
-                        delete_playlist_warning(self, ui);
-                    }
-                    if self.rename_playlist_show {
-                        rename_playlist(self, ui);
                     }
 
                     if ui.selectable_label(false, "+").clicked() {
@@ -1060,13 +1056,16 @@ impl eframe::App for TemplateApp {
                             .filter(|(_, s)| s.path == result.path)
                         //.take(1)
                         {
-                            if !self.loaded_paths.contains(&result.path) || (self.currently_selected_playlist_name == Some("Local Files".to_string())) {
-                                println!("Recacheing {}",path_to_string(&result.path));
+                            if !self.loaded_paths.contains(&result.path)
+                                || (self.currently_selected_playlist_name
+                                    == Some("Local Files".to_string()))
+                            {
+                                println!("Recacheing {}", path_to_string(&result.path));
                                 // TODO: Actual folder-space check
                                 self.loaded_paths.insert(result.path.clone());
-                                /*  This will have an issue where only the first instance of a song is updated. 
-                                    Might be good if each song creates a <hash>.mqinf for metadata, and #EXTINF just references to that file.
-                                    that way each instance of a song can be edited all at once. */
+                                /*  This will have an issue where only the first instance of a song is updated.
+                                Might be good if each song creates a <hash>.mqinf for metadata, and #EXTINF just references to that file.
+                                that way each instance of a song can be edited all at once. */
                                 song.album = result.data.album.clone();
                                 song.artist = result.data.artist.clone();
                                 song.length_string = result.data.length_string.clone();
