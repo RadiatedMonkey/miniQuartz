@@ -828,6 +828,7 @@ impl eframe::App for TemplateApp {
                         self.songs = Songs::new_from_folder(&local_path);
                         self.currently_selected_playlist_name = Some("Local Files".to_string());
                         self.currently_selected_playlist_path = local_path;
+                        ui.data_mut(|d| d.insert_temp(song_card_jump_trigger_id, true));
                     }
                     for i in 0..self.playlists.len() {
                         let playlist_name = self.playlists[i]
@@ -1060,6 +1061,7 @@ impl eframe::App for TemplateApp {
                         //.take(1)
                         {
                             if !self.loaded_paths.contains(&result.path) || (self.currently_selected_playlist_name == Some("Local Files".to_string())) {
+                                println!("Recacheing {}",path_to_string(&result.path));
                                 // TODO: Actual folder-space check
                                 self.loaded_paths.insert(result.path.clone());
                                 /*  This will have an issue where only the first instance of a song is updated. 

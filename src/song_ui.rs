@@ -233,8 +233,12 @@ pub fn draw_song_card(
         );
         return (false, false, false, None);
     }
-
-    load_metadata_if_needed(song, app.metadata_sender.clone());
+    if !app.loaded_paths.contains(&song.path)
+       || (app.currently_selected_playlist_name == Some("Local Files".to_string()))
+    {
+        // TODO: Actual folder-space check
+        load_metadata_if_needed(song, app.metadata_sender.clone());
+    }
     song.load_texture_if_needed(ctx);
 
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -391,7 +395,7 @@ pub fn draw_song_card(
     if response.clicked() {
         clicked = true;
     }
-    if response.secondary_clicked(){
+    if response.secondary_clicked() {
         secondary_clicked = true;
     }
 
