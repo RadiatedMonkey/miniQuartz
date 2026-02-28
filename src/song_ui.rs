@@ -34,17 +34,27 @@ pub fn right_click_song_card(
             let playlist_name = &path_to_string_name(playlist)[4..];
             let playlist_path = path_to_string(&playlist.to_path_buf());
             if ui.button(playlist_name).clicked() {
-                if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack {
-                    file_path: playlist_path.clone(),
-                    new_song: song_data.clone(),
-                })) {
-                    eprintln!("Failed to queue M3uEditTask: {}", e);
+                for song in &app.selected_songs {
+                    if let Err(e) = app.m3u_sender.send(M3uEditTask::Add(AddTrack {
+                        file_path: playlist_path.clone(),
+                        new_song: app.songs.articles[song.clone()].clone(),
+                    })) {
+                        eprintln!("Failed to queue M3uEditTask: {}", e);
+                    }
                 }
-                if Some(playlist_path) == app.currently_selected_playlist_name {
-                    app.songs.articles.push(song_data.clone());
-                }
+                // if Some(playlist_path) == app.currently_selected_playlist_name {
+                //     for song in &app.selected_songs {
+                //         app.songs.articles.push(app.songs.articles[song.clone()].clone());
+                //     }
+                // }
+
+                // not really sure why push isn't working here? this is definetly not the way extend is meant to be used
                 if Some(playlist_name) == app.currently_selected_playlist_name.as_deref() {
-                    app.songs.articles.extend([song_data.clone()]);
+                    for song in &app.selected_songs {
+                        app.songs
+                            .articles
+                            .extend([app.songs.articles[song.clone()].clone()]);
+                    }
                 }
             }
         }
@@ -52,14 +62,21 @@ pub fn right_click_song_card(
     });
     if ui.button("Remove from playlist").clicked() {
         let playlist_path = path_to_string(&app.currently_selected_playlist_path.to_path_buf());
-        if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack {
-            file_path: playlist_path,
-            index_to_remove: index,
-        })) {
-            show_error(app, format!("Failed to add removal to queue: {}", e));
-            eprintln!("Failed to add removal to queue: {}", e);
+        app.selected_songs.sort_by(|a, b| b.cmp(a));
+        for song in &app.selected_songs {
+            if let Err(e) = app.m3u_sender.send(M3uEditTask::Remove(RemoveTrack {
+                file_path: playlist_path.clone(),
+                index_to_remove: song.clone(),
+            })) {
+                //show_error(app, format!("Failed to add removal to queue: {}", e));
+                eprintln!("Failed to add removal to queue: {}", e);
+            }
+            if song < &app.songs.articles.len() {
+                app.songs.articles.remove(*song);
+            } else {
+                eprintln!("song_ui | Remove from playlist: Index for removal out of bounds.");
+            }
         }
-        app.songs.articles.remove(index);
     }
     if ui.button("Update Metadata").clicked() {
         load_metadata_if_needed(&mut song_data, app.metadata_sender.clone());
@@ -196,16 +213,17 @@ pub fn draw_song_card(
     ctx: &Context,
     ui: &mut Ui,
     i: usize,
-) -> (bool, bool, Option<usize>) {
+) -> (bool, bool, bool, Option<usize>) {
     if app.songs.articles.len() <= i {
         eprintln!("draw_song_card: Index out of range error");
-        return (false, false, None);
+        return (false, false, false, None);
     } /* this triggering when removing a song from a playlist is normal, since when you delete a song
     it removes an item from app.songs.articles before the for loop drawing the cards is finished.
     not sure if there's a better way to handle it, but this feels Just Okay. */
     let song = &mut app.songs.articles[i];
     let selected = app.selected_songs.contains(&i) as i32 as f32;
     let mut clicked = false;
+    let mut secondary_clicked = false;
     let mut double_clicked = false;
     let mut move_to = None;
     if !song.display {
@@ -213,7 +231,7 @@ pub fn draw_song_card(
             "song display false; nothing rendered for {} - {}",
             song.title, song.artist
         );
-        return (false, false, None);
+        return (false, false, false, None);
     }
 
     load_metadata_if_needed(song, app.metadata_sender.clone());
@@ -334,6 +352,7 @@ pub fn draw_song_card(
                         });
                         let remaining_width =
                             ui.available_width() - 60.0;
+                        //println!("{}",remaining_width);
                         ui.allocate_ui_with_layout(
                             egui::vec2(
                                 remaining_width,
@@ -373,6 +392,9 @@ pub fn draw_song_card(
     if response.clicked() {
         clicked = true;
     }
+    if response.secondary_clicked(){
+        secondary_clicked = true;
+    }
 
     if app.row_height.is_none() {
         app.row_height = Some(response.rect.height()); // todo: this is in the for loop and is probably fuck for performance \(￣︶￣*\))
@@ -389,5 +411,5 @@ pub fn draw_song_card(
     )
     .show(|ui| right_click_song_card(app, ui, song_send, i));
 
-    (clicked, double_clicked, move_to)
+    (clicked, secondary_clicked, double_clicked, move_to)
 }

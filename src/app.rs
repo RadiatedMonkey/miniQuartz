@@ -245,7 +245,6 @@ impl Default for TemplateApp {
                 if (time_since_task_added.elapsed() >= std::time::Duration::new(1, 0) && need_write)
                     || urgent
                 {
-                    println!("Write here!");
                     need_write = false;
                     urgent = false;
                     for (path, playlist) in pending_updates.drain() {
@@ -1086,37 +1085,46 @@ impl eframe::App for TemplateApp {
                     // / displaying song cards / //
                     // / //                 // / //
                     let mut clicked_song = false;
-                    for i in start..end {
-                        let (clicked, double_clicked, move_to) = draw_song_card(self, ctx, ui, i);
+                    for song_index in start..end {
+                        let (clicked, secondary_clicked, double_clicked, move_to) =
+                            draw_song_card(self, ctx, ui, song_index);
                         if double_clicked {
-                            let song: &SongCardData = &self.songs.articles[i];
+                            let song: &SongCardData = &self.songs.articles[song_index];
                             let path = song.path.clone();
 
                             self.now_playing = Some(path.clone());
                             self.now_playing_song = Some(song.clone());
 
                             play_song(self, path);
-                        } else if clicked {
+                        } else if clicked || secondary_clicked {
                             clicked_song = true;
                             ui.input(|input| {
                                 if input.modifiers.shift {
                                     if self.selected_songs.len() == 0 {
-                                        self.selected_songs_origin = i;
+                                        self.selected_songs_origin = song_index;
                                     }
                                     self.selected_songs.clear();
-                                    for i2 in self.selected_songs_origin.min(i)
-                                        ..=self.selected_songs_origin.max(i)
+                                    for i in self.selected_songs_origin.min(song_index)
+                                        ..=self.selected_songs_origin.max(song_index)
                                     {
-                                        self.selected_songs.push(i2);
+                                        self.selected_songs.push(i);
                                     }
-                                    self.selected_songs.push(i); // i really gotta stop using `i` for iterators ＞﹏＜
+                                    if !self.selected_songs.contains(&song_index) {
+                                        self.selected_songs.push(song_index);
+                                    } else {
+                                        println!(
+                                            "Attempted selecting already selected song; skipping"
+                                        );
+                                    }
                                 } else if input.modifiers.ctrl {
-                                    self.selected_songs.push(i);
-                                    self.selected_songs_origin = i;
+                                    self.selected_songs.push(song_index);
+                                    self.selected_songs_origin = song_index;
                                 } else {
-                                    self.selected_songs.clear();
-                                    self.selected_songs.push(i);
-                                    self.selected_songs_origin = i;
+                                    if clicked || (secondary_clicked && !self.selected_songs.contains(&song_index)) {
+                                        self.selected_songs.clear();
+                                        self.selected_songs.push(song_index);
+                                        self.selected_songs_origin = song_index;
+                                    }
                                 }
                             });
                         }
@@ -1145,7 +1153,7 @@ impl eframe::App for TemplateApp {
                             });
                         }
                     }
-                    if ui.input(|i| i.pointer.any_released()) {
+                    if ui.input(|i| i.pointer.primary_released()) {
                         if !clicked_song {
                             println!("clicked not song");
                             self.selected_songs.clear();
