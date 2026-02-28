@@ -14,6 +14,6 @@ target_wasm
 
 playlists/playlist-1
 cache/*
-playlists/00*
+*.m3u
 
 .idea

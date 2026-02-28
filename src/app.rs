@@ -9,6 +9,7 @@ use image::imageops::FilterType;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -121,6 +122,9 @@ pub struct TemplateApp {
     pub popup_open: bool,
     pub checked: bool,
     pub color: egui::Color32,
+
+    #[serde(skip)]
+    pub loaded_paths: HashSet<PathBuf>,
 }
 
 pub struct ThreadInfo {
@@ -251,9 +255,9 @@ impl Default for TemplateApp {
                     for (path, playlist) in pending_updates.drain() {
                         // todo: path should be part of M3uPlaylist
                         if let Err(e) = write_m3u(path, &playlist, true, false, true) {
-                            eprintln!("Error writing m3u: {}", e);
+                            eprintln!("M3uEditTasks: Error writing m3u: {}", e);
                         } else {
-                            println!("Successfully wrote m3u");
+                            println!("M3uEditTasks: Successfully wrote m3u");
                         }
                     }
                 }
@@ -337,6 +341,8 @@ impl Default for TemplateApp {
             popup_open: false,
             checked: true,
             color: egui::Color32::RED,
+
+            loaded_paths: HashSet::new(),
         }
     }
 }
@@ -1053,33 +1059,35 @@ impl eframe::App for TemplateApp {
                             .filter(|(_, s)| s.path == result.path)
                         //.take(1)
                         {
-                            song.album = result.data.album.clone();
-                            song.artist = result.data.artist.clone();
-                            song.length_string = result.data.length_string.clone();
-                            if !result.data.title.is_empty() {
-                                song.title = result.data.title.clone();
-                            } else {
-                                song.title = path_to_string_name(&song.path);
+                            if !self.loaded_paths.contains(&result.path) || (self.currently_selected_playlist_name == Some("Local Files".to_string())) {
+                                // TODO: Actual folder-space check
+                                self.loaded_paths.insert(result.path.clone());
+                                /*  This will have an issue where only the first instance of a song is updated. 
+                                    Might be good if each song creates a <hash>.mqinf for metadata, and #EXTINF just references to that file.
+                                    that way each instance of a song can be edited all at once. */
+                                song.album = result.data.album.clone();
+                                song.artist = result.data.artist.clone();
+                                song.length_string = result.data.length_string.clone();
+                                if !result.data.title.is_empty() {
+                                    song.title = result.data.title.clone();
+                                } else {
+                                    song.title = path_to_string_name(&song.path);
+                                }
+                                song.cover_path = result.data.cover_path.clone();
+                                if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
+                                    path: path_to_string(
+                                        &self.currently_selected_playlist_path.to_path_buf(),
+                                    ),
+                                    index,
+                                    album: song.album.clone(),
+                                    artist: song.artist.clone(),
+                                    cover: song.cover_path.clone(),
+                                    title: song.title.clone(),
+                                    length_string: song.length_string.clone(),
+                                })) {
+                                    eprintln!("Failed to add metadata to queue: {}", e);
+                                }
                             }
-                            song.cover_path = result.data.cover_path.clone();
-                            if let Err(e) = self.m3u_sender.send(M3uEditTask::Edit(EditTrack {
-                                path: path_to_string(
-                                    &self.currently_selected_playlist_path.to_path_buf(),
-                                ),
-                                index,
-                                album: song.album.clone(),
-                                artist: song.artist.clone(),
-                                cover: song.cover_path.clone(),
-                                title: song.title.clone(),
-                                length_string: song.length_string.clone(),
-                            })) {
-                                eprintln!("Failed to add metadata to queue: {}", e);
-                            }
-                            /* This multithreading SUCKS ASS!!!!!!!! We should be doing as many songs as possible at once,
-                            because right now we're rewriting the file for EVERY SONG that gets loaded. Horrendous! But I have
-                            A MAJOR SKILL ISSUE about multithreading. So. 🥺🥺
-                            Really though I think it should be possible to pass a vec of M3uEditTask's and have the thread
-                            go through every item in the vec. */
                         }
                     }
                     // / //                 // / //
@@ -1121,7 +1129,10 @@ impl eframe::App for TemplateApp {
                                     self.selected_songs.push(song_index);
                                     self.selected_songs_origin = song_index;
                                 } else {
-                                    if clicked || (secondary_clicked && !self.selected_songs.contains(&song_index)) {
+                                    if clicked
+                                        || (secondary_clicked
+                                            && !self.selected_songs.contains(&song_index))
+                                    {
                                         self.selected_songs.clear();
                                         self.selected_songs.push(song_index);
                                         self.selected_songs_origin = song_index;
